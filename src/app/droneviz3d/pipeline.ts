@@ -1,19 +1,23 @@
 /**
  * Processing Pipeline — deep module orchestrating 3D reconstruction steps.
  * The UI subscribes to step updates; the adapter decides HOW processing happens.
+ *
+ * The pipeline is driven by NVIDIA LocateAnything-3B semantic grounding: keyframes
+ * are grounded into labeled boxes, boxes are projected to the ground plane through
+ * the camera model, and the 3D model is generated from those grounded objects.
  */
 
 // Step Definitions (must come first for StepId inference)
 export const STEP_DEFINITIONS = [
-  { id: 'extract', name: 'Frame Extraction', detail: 'Extracting keyframes from video stream', tool: 'OpenCV + FFmpeg' },
-  { id: 'features', name: 'Feature Detection', detail: 'Detecting ORB/SIFT features per frame', tool: 'SuperPoint + ORB' },
-  { id: 'slam', name: 'Visual SLAM', detail: 'Tracking camera trajectory via ORB-SLAM3', tool: 'ORB-SLAM3' },
-  { id: 'sfm', name: 'Structure from Motion', detail: 'Bundle adjustment and sparse reconstruction', tool: 'COLMAP' },
-  { id: 'depth', name: 'Depth Estimation', detail: 'AI monocular depth + NeRF/3DGS inference', tool: 'NeRF + 3DGS' },
-  { id: 'pointcloud', name: 'Point Cloud Fusion', detail: 'Merging depth maps with Kalman filter fusion', tool: 'Kalman Filter' },
-  { id: 'mesh', name: 'Mesh Reconstruction', detail: 'Poisson surface reconstruction + hole filling', tool: 'Poisson + Open3D' },
-  { id: 'texture', name: 'Texture Mapping', detail: 'Projecting video frames onto mesh UV space', tool: 'UV Projection' },
-  { id: 'confidence', name: 'Confidence Scoring', detail: 'Per-pixel reliability assessment', tool: 'Bayesian' },
+  { id: 'extract', name: 'Frame Extraction', detail: 'Sampling keyframes along the single flight pass', tool: 'Keyframe planner' },
+  { id: 'grounding', name: 'Semantic Grounding', detail: 'LocateAnything-3B grounding of buildings, vehicles, trees per keyframe', tool: 'LocateAnything-3B (PBD)' },
+  { id: 'projection', name: 'Ground Projection', detail: 'Projecting detected boxes to world coordinates via camera model', tool: 'Pinhole + ENU' },
+  { id: 'tracking', name: 'Multi-view Tracking', detail: 'Deduplicating detections across keyframes with score fusion', tool: 'Corroboration fusion' },
+  { id: 'heightfield', name: 'Height Field', detail: 'Rasterizing grounded objects into a georeferenced height field', tool: '1.5 m grid' },
+  { id: 'pointcloud', name: 'Point Cloud Generation', detail: 'Synthesizing classified, confidence-weighted 3D points', tool: 'Height-field sampling' },
+  { id: 'mesh', name: 'Mesh Reconstruction', detail: 'Triangulating surfaces and filling gaps between objects', tool: 'Grid triangulation' },
+  { id: 'confidence', name: 'Confidence Scoring', detail: 'Per-point reliability from grounding score + corroboration', tool: 'Score fusion' },
+  { id: 'georef', name: 'Georeferencing', detail: 'Mapping local ENU coordinates to WGS84 lat/lng', tool: 'Equirectangular' },
   { id: 'export', name: 'Export & Package', detail: 'Generating OBJ/PLY/GLTF + orthophoto', tool: 'glTF + GeoTIFF' },
 ] as const
 
@@ -68,7 +72,7 @@ export function createDemoAdapter(): PipelineAdapter {
   }
 }
 
-export const DEFAULT_DURATIONS = [800, 1200, 1500, 2000, 2500, 1800, 2200, 1500, 1000, 800]
+export const DEFAULT_DURATIONS = [800, 1400, 900, 1000, 1100, 1600, 1300, 900, 900, 800]
 
 export function createInitialSteps(): PipelineStep[] {
   return STEP_DEFINITIONS.map((def) => ({

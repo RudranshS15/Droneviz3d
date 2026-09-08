@@ -6,9 +6,25 @@ node_modules/
 out/
 build/
 
-# Environment
+# Environment — never commit real values. Keep only the template.
 .env
-.env.*.local
+.env.*
+!.env.example
+
+# Secrets & credentials (defense in depth)
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.jks
+*.keystore
+credentials.json
+service-account*.json
+
+# Logs
+*.log
+npm-debug.log*
 
 # OS
 .DS_Store
@@ -21,5 +37,17 @@ Thumbs.db
 # Start scripts (deployment helpers, not source)
 *.bat
 
+# Local test screenshots — never part of the repo
+screenshots/
+
 # TypeScript build info
 tsconfig.tsbuildinfo
+
+# Coverage / CI noise
+coverage/
+.vercel/
+
+# Local database (admin backend) — never commit user data
+data/
+# Codebuff workspace state
+.freebuff/

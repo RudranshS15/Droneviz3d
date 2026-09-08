@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState, useRef } from 'react'
 
-const pipeline = ['Video', 'Frames', 'Features', 'SLAM', 'Depth', 'Point Cloud', 'Mesh', '3D Model']
+const pipeline = ['Video', 'Keyframes', 'Grounding', 'Projection', 'Tracking', 'Height Field', 'Point Cloud', 'Mesh', 'Georeference', 'Export']
 
 function PipelineDemo() {
   const [step, setStep] = useState(0)
@@ -18,19 +18,25 @@ function PipelineDemo() {
 
   useEffect(() => {
     if (!visible) return
+    // Respect reduced-motion: show the completed pipeline statically instead of animating.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setStep(pipeline.length - 1)
+      return
+    }
     const iv = setInterval(() => setStep((s) => (s + 1) % pipeline.length), 1800)
     return () => clearInterval(iv)
   }, [visible])
 
   return (
     <div ref={ref} className="relative max-w-4xl mx-auto mt-16">
-      <div className="flex items-center justify-between gap-1 px-2">
+      <ul className="flex items-center justify-between gap-1 px-2" aria-label="Processing pipeline steps">
         {pipeline.map((label, i) => {
           const active = i === step
           const done = i < step
           return (
-            <div key={label} className="flex-1 flex flex-col items-center gap-2">
+            <li key={label} className="flex-1 flex flex-col items-center gap-2">
               <div
+                aria-hidden="true"
                 className={`w-full h-10 rounded-lg flex items-center justify-center text-[11px] font-semibold transition-all duration-500 ${
                   active
                     ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-lg shadow-cyan-500/10'
@@ -41,15 +47,22 @@ function PipelineDemo() {
               >
                 {done ? '✓' : active ? '⟳' : i + 1}
               </div>
-              <span className={`text-[10px] font-medium text-center leading-tight transition-colors duration-500 ${active ? 'text-cyan-400' : done ? 'text-white/40' : 'text-white/15'}`}>
+              <span className={`text-[10px] font-medium text-center leading-tight transition-colors duration-500 ${active ? 'text-cyan-300' : done ? 'text-[#a8a29e]' : 'text-white/45'}`}>
                 {label}
               </span>
-            </div>
+            </li>
           )
         })}
-      </div>
+      </ul>
       {/* Progress bar */}
-      <div className="mt-4 h-0.5 bg-white/[0.04] rounded-full overflow-hidden">
+      <div
+        className="mt-4 h-0.5 bg-white/[0.06] rounded-full overflow-hidden"
+        role="progressbar"
+        aria-valuemin={1}
+        aria-valuemax={pipeline.length}
+        aria-valuenow={step + 1}
+        aria-label={`Pipeline demo showing step ${step + 1} of ${pipeline.length}: ${pipeline[step]}`}
+      >
         <div
           className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-700"
           style={{ width: `${((step + 1) / pipeline.length) * 100}%` }}
@@ -67,16 +80,21 @@ function BeforeAfterDemo() {
       <div className="text-center mb-8">
         <p className="text-sm text-white/30 mb-2">Single-pass drone video</p>
         <div className="flex items-center justify-center gap-3">
-          <span className="text-[13px] text-white/30 font-medium">Before</span>
+          <span className="text-[13px] text-[#a8a29e] font-medium">Before</span>
           <button
+            type="button"
+            role="switch"
+            aria-checked={showAfter}
+            aria-label={`Show ${showAfter ? 'raw video frames (before)' : 'generated 3D model (after)'}`}
             onClick={() => setShowAfter(!showAfter)}
-            className="relative w-12 h-6 rounded-full bg-white/10 border border-white/10 transition-colors hover:bg-white/15"
+            className="relative w-12 h-6 rounded-full bg-white/10 border border-white/20 transition-colors hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400"
           >
             <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg transition-transform duration-300 ${showAfter ? 'translate-x-6' : ''}`}
+              aria-hidden="true"
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg transition-transform duration-300 motion-reduce:transition-none ${showAfter ? 'translate-x-6' : ''}`}
             />
           </button>
-          <span className="text-[13px] text-cyan-400 font-medium">After</span>
+          <span className="text-[13px] text-cyan-300 font-medium">After</span>
         </div>
       </div>
 
@@ -110,7 +128,9 @@ function BeforeAfterDemo() {
           <div className="absolute inset-0 bg-[#0a0e14] flex items-center justify-center">
             <div className="relative w-full h-full">
               {/* Simulated 3D point cloud */}
-              <svg viewBox="0 0 800 450" className="w-full h-full">
+              <svg viewBox="0 0 800 450" className="w-full h-full" role="img"
+                aria-label="Illustration of a georeferenced 3D reconstruction: building outlines, a point cloud colored by confidence, and the drone camera trajectory">
+                <title>Illustrative 3D reconstruction preview</title>
                 {/* Ground plane */}
                 <ellipse cx="400" cy="320" rx="300" ry="60" fill="url(#groundGrad)" opacity="0.3" />
                 {/* Buildings */}
@@ -168,7 +188,7 @@ function BeforeAfterDemo() {
                 <circle cx="700" cy="90" r="4" fill="#22d3ee" opacity="0.6" />
                 {/* Labels */}
                 <text x="400" y="400" textAnchor="middle" fill="white" opacity="0.3" fontSize="11" fontFamily="system-ui">
-                  Georeferenced 3D Reconstruction — 847,329 points — 0.8cm accuracy
+                  Illustrative demo — georeferenced 3D reconstruction from grounded detections
                 </text>
                 <defs>
                   <radialGradient id="groundGrad">
@@ -186,6 +206,8 @@ function BeforeAfterDemo() {
 }
 
 export default function LandingPage() {
+  /** True when the operator configured the real LocateAnything-3B worker backend. */
+  const workerMode = process.env.NEXT_PUBLIC_GROUNDING_MODE === 'worker'
   const [heroVisible, setHeroVisible] = useState(false)
   useEffect(() => { setHeroVisible(true) }, [])
 
@@ -204,8 +226,8 @@ export default function LandingPage() {
 
         <div className="relative z-10 max-w-5xl">
           <div className={`transition-all duration-700 ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/[0.08] border border-cyan-500/20 text-cyan-400 text-[12px] font-medium mb-8">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/[0.08] border border-cyan-500/20 text-cyan-300 text-[12px] font-medium mb-8">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" aria-hidden="true" />
               Smart India Hackathon 2026 &middot; SIH26158
             </div>
           </div>
@@ -219,8 +241,11 @@ export default function LandingPage() {
           </h1>
 
           <p className={`text-lg sm:text-xl text-white/40 max-w-2xl mx-auto leading-relaxed mb-10 transition-all duration-700 delay-200 ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-            Upload a single drone video. Get a georeferenced, metrically accurate 3D model.
-            Sub-centimeter precision from one flight path — powered by NeRF, 3D Gaussian Splatting, and Visual SLAM.
+            Upload a single drone video with flight metadata. Keyframes are grounded with
+            NVIDIA LocateAnything-3B and a georeferenced 3D model is generated from those
+            detections{workerMode
+              ? ' — grounded by your on-premise inference worker; all other processing runs in your browser.'
+              : ' — processed entirely in your browser.'}
           </p>
 
           <div className={`flex flex-col sm:flex-row items-center justify-center gap-3 transition-all duration-700 delay-300 ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
@@ -239,19 +264,20 @@ export default function LandingPage() {
           </div>
 
           {/* Stats strip */}
-          <div className={`grid grid-cols-2 sm:grid-cols-4 gap-6 mt-16 transition-all duration-700 delay-500 ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+          <dl className={`grid grid-cols-2 sm:grid-cols-4 gap-6 mt-16 transition-all duration-700 delay-500 motion-reduce:transition-none ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
             {[
               { value: '1', label: 'Flight Pass' },
-              { value: '<1cm', label: 'Accuracy' },
-              { value: '90%', label: 'Faster Processing' },
-              { value: '80%', label: 'Cost Savings' },
+              { value: '24', label: 'Grounded Keyframes' },
+              { value: '100%', label: 'On-Device Processing' },
+              { value: 'WGS84', label: 'Georeferenced Output' },
             ].map((s) => (
               <div key={s.label}>
-                <div className="text-3xl sm:text-4xl font-black tracking-tight text-white/90">{s.value}</div>
-                <div className="text-[12px] text-white/25 mt-1 font-medium">{s.label}</div>
+                <dt className="sr-only">{s.label}</dt>
+                <dd className="text-3xl sm:text-4xl font-black tracking-tight text-white/90">{s.value}</dd>
+                <dd className="text-[12px] text-[#a8a29e] mt-1 font-medium">{s.label}</dd>
               </div>
             ))}
-          </div>
+          </dl>
         </div>
       </section>
 
@@ -263,7 +289,7 @@ export default function LandingPage() {
             <span className="text-cyan-400">10 steps</span>
           </h2>
           <p className="text-white/30 max-w-xl mx-auto text-[15px]">
-            Real-time processing pipeline transforms your drone footage into a textured, georeferenced 3D model.
+            The processing pipeline grounds your footage with LocateAnything-3B and generates a georeferenced 3D model from those detections.
           </p>
         </div>
         <PipelineDemo />
@@ -276,8 +302,8 @@ export default function LandingPage() {
             See the{' '}
             <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">transformation</span>
           </h2>
-          <p className="text-white/30 text-[15px]">
-            Raw video frames on the left. Reconstructed 3D model on the right.
+          <p className="text-[#a8a29e] max-w-xl mx-auto text-[15px]">
+            Raw video frames first. Generated 3D model after the toggle.
           </p>
         </div>
         <BeforeAfterDemo />
@@ -299,8 +325,8 @@ export default function LandingPage() {
               },
               {
                 step: '02',
-                title: 'Process',
-                desc: 'AI pipeline extracts keyframes, tracks camera pose via Visual SLAM, estimates depth with NeRF/3DGS, and reconstructs textured mesh.',
+                title: 'Ground',
+                desc: 'LocateAnything-3B grounds buildings, vehicles, and trees in sampled keyframes; detections are projected to world coordinates through the camera model.',
                 icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
               },
               {
@@ -311,14 +337,14 @@ export default function LandingPage() {
               },
             ].map((item) => (
               <div key={item.step} className="group p-8 rounded-2xl bg-white/[0.02] border border-white/[0.04] hover:border-cyan-500/20 hover:bg-cyan-500/[0.02] transition-all duration-300">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 flex items-center justify-center mb-6 group-hover:shadow-lg group-hover:shadow-cyan-500/10 transition-shadow">
-                  <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/30 flex items-center justify-center mb-6 group-hover:shadow-lg group-hover:shadow-cyan-500/10 transition-shadow" aria-hidden="true">
+                  <svg className="w-5 h-5 text-cyan-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
                   </svg>
                 </div>
-                <div className="text-[11px] font-mono text-cyan-400/60 mb-2">Step {item.step}</div>
-                <h3 className="text-lg font-bold text-white mb-2">{item.title}</h3>
-                <p className="text-[13px] text-white/30 leading-relaxed">{item.desc}</p>
+                <div className="text-[11px] font-mono text-[#d4a053] mb-2">Step {item.step}</div>
+                <h3 className="text-lg font-bold text-[#e7e5e4] mb-2">{item.title}</h3>
+                <p className="text-[13px] text-[#a8a29e] leading-relaxed">{item.desc}</p>
               </div>
             ))}
           </div>
@@ -331,23 +357,22 @@ export default function LandingPage() {
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-4">
             Built for real-world use
           </h2>
-          <p className="text-white/30 text-[15px] mb-12 max-w-xl mx-auto">
+          <p className="text-[#a8a29e] text-[15px] mb-12 max-w-xl mx-auto">
             From disaster response to urban planning — one flight, one model, total situational awareness.
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {[
-              { icon: '🛡️', name: 'Defense & Border' },
-              { icon: '🆘', name: 'Disaster Response' },
-              { icon: '🏙️', name: 'Urban Planning' },
-              { icon: '🏗️', name: 'Construction' },
-              { icon: '🛤️', name: 'Infrastructure' },
-              { icon: '🏛️', name: 'Archaeology' },
-              { icon: '🌐', name: 'Digital Twins' },
-              { icon: '🌾', name: 'Agriculture' },
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">              {[
+                { icon: '🛡️', name: 'Defense & Border', emojiLabel: 'Shield emoji' },
+              { icon: '🆘', name: 'Disaster Response', emojiLabel: 'Rescue emoji' },
+              { icon: '🏙️', name: 'Urban Planning', emojiLabel: 'City emoji' },
+              { icon: '🏗️', name: 'Construction', emojiLabel: 'Construction emoji' },
+              { icon: '🛤️', name: 'Infrastructure', emojiLabel: 'Railway emoji' },
+              { icon: '🏛️', name: 'Archaeology', emojiLabel: 'Museum emoji' },
+              { icon: '🌐', name: 'Digital Twins', emojiLabel: 'Globe emoji' },
+              { icon: '🌾', name: 'Agriculture', emojiLabel: 'Seedling emoji' },
             ].map((a) => (
-              <div key={a.name} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.04] hover:border-cyan-500/15 transition-all group">
-                <div className="text-2xl mb-2">{a.icon}</div>
-                <div className="text-[12px] text-white/50 font-medium group-hover:text-white/70 transition-colors">{a.name}</div>
+              <div key={a.name} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.08] hover:border-cyan-500/30 transition-all group">
+                <div className="text-2xl mb-2" role="img" aria-label={a.emojiLabel}>{a.icon}</div>
+                <div className="text-[12px] text-[#e7e5e4]/80 font-medium group-hover:text-[#e7e5e4] transition-colors">{a.name}</div>
               </div>
             ))}
           </div>
@@ -357,12 +382,12 @@ export default function LandingPage() {
       {/* CTA */}
       <section className="py-24 px-4">
         <div className="max-w-3xl mx-auto text-center">
-          <div className="p-12 rounded-3xl bg-gradient-to-br from-cyan-500/[0.06] to-blue-500/[0.04] border border-white/[0.05]">
+          <div className="p-12 rounded-3xl bg-gradient-to-br from-cyan-500/[0.06] to-blue-500/[0.04] border border-white/[0.08]">
             <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
               Ready to reconstruct?
             </h2>
-            <p className="text-white/30 mb-8 text-[15px]">
-              Upload your drone video and get a 3D model in minutes, not hours.
+            <p className="text-[#a8a29e] mb-8 text-[15px]">
+              Upload your drone video and flight metadata to generate a georeferenced 3D model.
             </p>
             <Link
               href="/droneviz3d/upload"

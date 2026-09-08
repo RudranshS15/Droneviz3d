@@ -12,10 +12,40 @@ Smart India Hackathon 2026 · SIH26158 · Team ByteCraft
 Open http://localhost:3000/droneviz3d
 
 ## Tech Stack
-- Next.js 14 + React 18
+- Next.js 15 + React 19
 - Tailwind CSS
 - Zustand (state management)
 - WebGL Canvas (3D rendering)
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for the full audit: zero vulnerabilities, security
+headers, hardened inference worker, and the admin backend controls.
+
+## Admin backend
+
+An optional session-authenticated admin area lives at `/droneviz3d/admin`:
+
+- **First-run**: visit `/droneviz3d/admin` and create an account — the first
+  account on a fresh installation becomes the administrator.
+- **Auth**: argon2id password hashing; httpOnly SameSite cookies (7-day sessions);
+  per-session CSRF tokens (required on every mutating call, refreshed via
+  `GET /api/auth/me`); per-IP rate limits **plus per-account lockout** (5 bad
+  passwords on one email → 15 min lock). Password changes need the current
+  password (forced re-auth), sign out other sessions, and rotate the session
+  cookie.
+- **Storage**: local SQLite via Node's built-in `node:sqlite` — `data/droneviz3d.db`
+  (gitignored). Every query is a prepared statement; the same file backs the
+  shared rate-limit store so limits hold across server instances on one volume.
+- **Admin APIs**: `GET /api/admin/users`, `PATCH /api/admin/users/[id]`
+  (promote/demote — revokes the target's sessions), `DELETE /api/admin/users/[id]`
+  (guards: no self-delete, no removing the last admin), `GET /api/admin/status`
+  (includes a live LocateAnything worker health probe). All admin APIs are
+  rate-limited.
+- **Auth APIs**: `POST /api/auth/{register,login,logout}`, `GET /api/auth/me`,
+  `PATCH /api/auth/password`.
+
+Reset the backend by deleting `data/` and restarting the server.
 
 ## Pages
 - `/droneviz3d` — Landing page
