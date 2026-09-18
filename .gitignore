@@ -51,3 +51,6 @@ coverage/
 data/
 # Codebuff workspace state
 .freebuff/
+
+# Test build output (tsconfig.test.json)
+.test-build/

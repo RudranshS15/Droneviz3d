@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \".test-build/tests/*.test.js\"",
+    "verify": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.0",
