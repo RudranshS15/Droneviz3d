@@ -7,11 +7,14 @@ import { useDroneVizStore, STEP_META, isRunning, isComplete, isError, getProgres
 
 export default function ProcessingPage() {
   const router = useRouter()
-  const { isProcessing, processingComplete, steps, videoFile } = useDroneVizStore()
+  const { processingComplete, steps, videoFile, hydrated } = useDroneVizStore()
 
+  // A restored session has no File object (videoFile is never persisted), so a
+  // completed run must not be mistaken for an empty one while storage settles.
   useEffect(() => {
+    if (!hydrated) return
     if (!videoFile && !processingComplete) router.push('/droneviz3d/upload')
-  }, [videoFile, processingComplete, router])
+  }, [hydrated, videoFile, processingComplete, router])
 
   const completedCount = steps.filter((s) => isComplete(s.state)).length
   const currentStep = steps.find((s) => isRunning(s.state))
