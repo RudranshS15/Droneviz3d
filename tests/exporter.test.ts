@@ -22,7 +22,7 @@ const POINTS: Point3D[] = [
 const METRICS: ReconstructionMetrics = {
   totalPoints: '2', accuracy: 'n/a (single pass)', processingTime: 'client-side demo',
   coverage: '80.0%', confidenceScore: '0.63', groundedObjects: '1',
-  groundedLabels: 'building', provenance: 'test',
+  groundedLabels: 'building', keyframesSampled: '24', provenance: 'test',
 }
 
 function payload(origin: { lat: number; lng: number } | null): ExportPayload {

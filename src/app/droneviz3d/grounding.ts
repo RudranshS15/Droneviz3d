@@ -54,7 +54,6 @@ export interface GroundingPoint {
 
 const BOX_RE = /<ref>([^<]*)<\/ref><box><(\d+)><(\d+)><(\d+)><(\d+)><\/box>/g
 const POINT_RE = /<box><(\d+)><(\d+)><\/box>/g
-const NONE_RE = /<box>none<\/box>/
 
 /**
  * Parse a raw LocateAnything answer string into detections.
@@ -225,6 +224,12 @@ export interface TrackedObject {
   /** fused score: mean of contributing detections weighted by their scores */
   score: number
   observations: number
+  /**
+   * Every contributing per-keyframe detection, in the order they were fused.
+   * Kept so the UI can show the evidence behind a fused object instead of only
+   * its summary — this is what "supporting observations" means in the viewer.
+   */
+  hits: ProjectedDetection[]
   /** best (highest-scoring) contributing detection */
   best: ProjectedDetection
 }
@@ -245,6 +250,7 @@ export function deduplicateDetections(dets: ProjectedDetection[]): TrackedObject
     )
     if (match) {
       const wSum = match.score * match.observations + d.score
+      match.hits.push(d)
       match.center = {
         x: (match.center.x * match.observations + d.center.x) / (match.observations + 1),
         y: (match.center.y * match.observations + d.center.y) / (match.observations + 1),
@@ -259,7 +265,7 @@ export function deduplicateDetections(dets: ProjectedDetection[]): TrackedObject
       tracked.push({
         label: d.label, center: d.center,
         halfExtentX: d.halfExtentX, halfExtentY: d.halfExtentY,
-        score: d.score, observations: 1, best: d,
+        score: d.score, observations: 1, hits: [d], best: d,
       })
     }
   }

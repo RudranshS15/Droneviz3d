@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import {
   KeyframePlan, createSimulatedLocateAnythingAdapter, planKeyframes,
 } from '../src/app/droneviz3d/grounding'
-import { reconstruct, ReconstructOutput } from '../src/app/droneviz3d/reconstruct'
+import { TRAJECTORY_RGB, isTrajectoryPoint, reconstruct, ReconstructOutput } from '../src/app/droneviz3d/reconstruct'
 import { FlightParams } from '../src/app/droneviz3d/geometry'
 import { ValidatedFlightData } from '../src/app/droneviz3d/validator'
 
@@ -134,9 +134,13 @@ test('point confidence stays inside the documented band', async () => {
 
 test('the drone track is embedded in the point cloud at exactly the flight altitude', async () => {
   const out = await run(flight())
-  const track = out.points.filter((p) => p.r === 60 && p.g === 150 && p.b === 220)
+  const track = out.points.filter(isTrajectoryPoint)
   assert.equal(track.length, 61)
   for (const p of track) assert.equal(p.z, 120)
+  // The track colour must stay unique against every class colour, or the
+  // viewer's path layer would swallow real reconstruction points.
+  const classLike = new Set(out.points.filter((p) => !isTrajectoryPoint(p)).map((p) => `${p.r},${p.g},${p.b}`))
+  assert.ok(!classLike.has(`${TRAJECTORY_RGB.r},${TRAJECTORY_RGB.g},${TRAJECTORY_RGB.b}`))
 })
 
 test('georeferenced bounds contain every trajectory pose', async () => {

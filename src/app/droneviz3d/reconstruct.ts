@@ -14,11 +14,11 @@
  */
 
 import {
-  CameraModel, FlightParams, Vec3, hashString, mulberry32, poseAt, poseToLngLat,
+  CameraModel, FlightParams, hashString, mulberry32, poseAt, poseToLngLat,
 } from './geometry'
 import {
-  GroundingBox, GroundingResponse, KeyframePlan, ProjectedDetection, TrackedObject,
-  projectBoxToGround, deduplicateDetections, TARGET_KEYFRAMES,
+  GroundingResponse, KeyframePlan, ProjectedDetection, TrackedObject,
+  projectBoxToGround, deduplicateDetections,
 } from './grounding'
 import { ValidatedFlightData } from './validator'
 
@@ -26,6 +26,18 @@ export interface Point3D {
   x: number; y: number; z: number
   r: number; g: number; b: number
   confidence: number
+}
+
+/**
+ * Colour of the drone-track markers embedded in the point cloud. It is a
+ * protocol between the renderer and the pipeline: the viewer pulls these points
+ * out of the cloud and draws them as a flight path instead of loose points.
+ * No class colour in CLASS_COLORS collides with it.
+ */
+export const TRAJECTORY_RGB = { r: 60, g: 150, b: 220 } as const
+
+export function isTrajectoryPoint(p: { r: number; g: number; b: number }): boolean {
+  return p.r === TRAJECTORY_RGB.r && p.g === TRAJECTORY_RGB.g && p.b === TRAJECTORY_RGB.b
 }
 
 export interface ReconstructionPose {
@@ -53,6 +65,8 @@ export interface ReconstructionMetrics {
   confidenceScore: string
   groundedObjects: string
   groundedLabels: string
+  /** how many keyframes were sampled for grounding (a measured input) */
+  keyframesSampled: string
   provenance: string
 }
 
@@ -189,12 +203,14 @@ function synthesizePointCloud(
     }
   }
 
-  // 3. Camera trajectory as sparse elevated markers (drone path).
+  // 3. Camera trajectory as sparse elevated markers (drone path). The viewer
+  //    identifies these by colour so it can draw them as a path layer instead
+  //    of loose points — keep TRAJECTORY_RGB the single source for that key.
   for (let i = 0; i <= 60; i++) {
     const pose = poseAt(flight, i / 60, i)
     points.push({
       x: pose.x, y: pose.y, z: pose.z,
-      r: 60, g: 150, b: 220,
+      ...TRAJECTORY_RGB,
       confidence: 0.95,
     })
   }
@@ -338,6 +354,7 @@ export function reconstruct(input: ReconstructInput): ReconstructOutput {
     confidenceScore: avgConf.toFixed(2),
     groundedObjects: String(tracked.length),
     groundedLabels: labels.length > 0 ? labels.join(', ') : 'none detected',
+    keyframesSampled: String(keyframePlan.count),
     provenance: 'Reconstructed from LocateAnything-3B detections + flight metadata (demo synthesis)',
   }
 
