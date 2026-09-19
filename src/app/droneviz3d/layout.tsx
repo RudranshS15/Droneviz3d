@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useDroneVizStore } from './store'
@@ -24,6 +24,19 @@ export default function DroneViz3DLayout({ children }: { children: React.ReactNo
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const { isProcessing, processingComplete } = useDroneVizStore()
+
+  // Session-model rehydration can settle after the first render, so kick it here
+  // (once, for the whole section) and mark it finished either way. Page guards
+  // wait on `hydrated` before concluding that no model exists: without this a
+  // hard load of a viewer or results URL bounces the user to Upload even though
+  // their finished model is still in sessionStorage.
+  useEffect(() => {
+    const store = useDroneVizStore
+    if (store.getState().hydrated) return
+    Promise.resolve(store.persist.rehydrate())
+      .catch(() => undefined)
+      .then(() => store.getState().markHydrated())
+  }, [])
 
   return (
     <div className="min-h-screen bg-[#09090b] text-white font-sans selection:bg-cyan-500/30">

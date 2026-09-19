@@ -1,9 +1,8 @@
 import { create } from 'zustand'
 import { persist, PersistStorage, StorageValue } from 'zustand/middleware'
 import {
-  PipelineStep, StepId, StepUpdate, STEP_DEFINITIONS,
+  PipelineStep, StepUpdate,
   createInitialSteps, createDemoAdapter, DEFAULT_DURATIONS,
-  isRunning, isComplete, isError, isPending, getProgress,
 } from './pipeline'
 import {
   Point3D, ReconstructionPose, ConfidenceAnnotation, ReconstructionMetrics,
@@ -47,6 +46,21 @@ export interface DroneVizState {
   bounds: ReconstructOutput['bounds'] | null
   /** user consent to process the uploaded video + metadata (required to start) */
   dataConsent: boolean
+  /**
+   * Set once when this browser session rehydrates a finished reconstruction from
+   * sessionStorage. Never persisted: it describes where the data came from, not
+   * the data. The results page uses it to say so instead of implying a fresh run.
+   */
+  restoredFromSession: boolean
+  markRestored: () => void
+  /**
+   * True once sessionStorage rehydration has settled (or is known to be empty).
+   * Never persisted. Page guards must wait for this before deciding that there is
+   * no model — otherwise a hard load of a viewer/results URL races rehydration
+   * and bounces the user to Upload even though their model is still stored.
+   */
+  hydrated: boolean
+  markHydrated: () => void
   setVideoFile: (file: File) => void
   setVideoDuration: (sec: number) => void
   setMetadata: (meta: Partial<FlightMetadata>) => void
@@ -203,6 +217,11 @@ export const useDroneVizStore = create<DroneVizState>()(
       pointCloud: [], trajectory: [], annotations: [], metrics: null,
       trackedObjects: [], bounds: null,
       dataConsent: false,
+      restoredFromSession: false,
+      hydrated: false,
+
+      markRestored: () => set({ restoredFromSession: true }),
+      markHydrated: () => set({ hydrated: true }),
 
       setVideoFile: (file) => {
         const preview = URL.createObjectURL(file)
@@ -224,7 +243,9 @@ export const useDroneVizStore = create<DroneVizState>()(
         const result: ValidationResult = validateFlightData(metadata as RawFlightData)
         if (!result.ok) { set({ validationErrors: result.errors.map((e) => e.message) }); return false }
 
-        set({ validationErrors: [], isProcessing: true, processingComplete: false, steps: createInitialSteps(), currentStep: 0 })
+        // A new run is by definition fresh, even if the previous model in this
+        // tab came back from sessionStorage.
+        set({ validationErrors: [], isProcessing: true, processingComplete: false, steps: createInitialSteps(), currentStep: 0, restoredFromSession: false })
 
         // Stage 1: staged pipeline visualization. Stage 2 (onComplete): real
         // reconstruction driven by LocateAnything-3B detections.
@@ -311,7 +332,7 @@ export const useDroneVizStore = create<DroneVizState>()(
         metadata: initialMetadata, validationErrors: [],
         steps: createInitialSteps(), currentStep: 0, isProcessing: false, processingComplete: false,
         pointCloud: [], trajectory: [], annotations: [], metrics: null,
-        trackedObjects: [], bounds: null,
+        trackedObjects: [], bounds: null, restoredFromSession: false,
         // Keep the user's consent decision; it is per-browser, not per-upload.
       }),
     }),
@@ -336,6 +357,16 @@ export const useDroneVizStore = create<DroneVizState>()(
       }) as unknown as DroneVizState,
       migrate: (persisted) => sanitizePersisted(persisted) as unknown as DroneVizState,
       storage: sessionStore,
+      // Rehydration runs on the client. If a finished model came back, flag it so
+      // the UI can be explicit about the source, and record that hydration is
+      // done so guards can stop deferring.
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        if (state.processingComplete && (state.pointCloud.length > 0 || state.metrics)) {
+          state.markRestored()
+        }
+        state.markHydrated()
+      },
     }
   )
 )
