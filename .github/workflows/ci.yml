@@ -1,0 +1,28 @@
+name: CI
+
+# Runs the same gate the project expects locally (`npm run verify`), so a change
+# that breaks types, lint, the characterisation tests, or the production build
+# cannot land unnoticed.
+#
+# Browser checks (viewer framing and layers, the results states) are not
+# automated yet — they need a headless browser suite. Until then they are run
+# manually against `npm run dev`; see docs/ARCHITECTURE-AUDIT.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
