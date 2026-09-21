@@ -231,7 +231,16 @@ export const useDroneVizStore = create<DroneVizState>()(
       // decoded; clamp so it can never poison downstream math.
       setVideoDuration: (sec) => set({ videoDurationSec: Number.isFinite(sec) ? Math.max(0, sec) : 0 }),
       setMetadata: (meta) => set((s) => ({ metadata: { ...s.metadata, ...meta }, validationErrors: [] })),
-      setDataConsent: (consent) => set({ dataConsent: consent }),
+      setDataConsent: (consent) =>
+        set((s) => ({
+          dataConsent: consent,
+          // The consent message is about the control the user just used, so it
+          // must not outlive the fix that clears it. Unrelated validation errors
+          // stay until they are addressed.
+          validationErrors: consent
+            ? s.validationErrors.filter((message) => !/consent/i.test(message))
+            : s.validationErrors,
+        })),
 
       validateAndStart: () => {
         const { metadata, videoFile, videoDurationSec, dataConsent } = get()

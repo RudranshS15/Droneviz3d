@@ -147,6 +147,24 @@ test('a fresh run clears the restored flag', () => {
   assert.equal(store.getState().metrics, null)
 })
 
+test('granting consent clears the consent error but leaves other errors alone', () => {
+  const store = loadStore(fakeStorage())
+  store.getState().setVideoFile(new File(['x'], 'clip.webm', { type: 'video/webm' }))
+
+  // Starting without consent is refused, with an explanation.
+  assert.equal(store.getState().validateAndStart(), false)
+  assert.ok(store.getState().validationErrors.some((m) => /consent/i.test(m)))
+
+  // Ticking the box fixes exactly that problem, so the message must not linger.
+  store.getState().setDataConsent(true)
+  assert.deepEqual(store.getState().validationErrors, [])
+
+  // An unrelated field error survives a consent toggle, and vice versa.
+  store.setState({ validationErrors: ['Altitude must be a number', 'Please consent before starting'] })
+  store.getState().setDataConsent(true)
+  assert.deepEqual(store.getState().validationErrors, ['Altitude must be a number'])
+})
+
 test('what gets persisted is only the finished model', () => {
   const storage = fakeStorage()
   const store = loadStore(storage)
