@@ -22,6 +22,8 @@ const TOKEN = 'a'.repeat(64)
 function ctx(overrides: Partial<Parameters<typeof decideBootstrapRole>[0]> = {}) {
   return {
     hasAdmin: false,
+    ownersConfigured: false,
+    isOwner: false,
     configuredToken: null as string | null,
     isProduction: true,
     isLocalRequest: false,
@@ -29,7 +31,7 @@ function ctx(overrides: Partial<Parameters<typeof decideBootstrapRole>[0]> = {})
   }
 }
 
-test('an installation that already has an administrator never grants another one', () => {
+test('without an allowlist, an installation with an administrator never grants another one', () => {
   // Even a caller who knows the bootstrap token cannot escalate once an admin
   // exists — the token is a setup credential, not a standing privilege.
   assert.deepEqual(decideBootstrapRole(ctx({ hasAdmin: true }), ''), { action: 'create-user' })
@@ -82,6 +84,60 @@ test('without a token, a proxied request to a public host is refused', () => {
 test('without a token, the developer\'s own machine keeps the first-run flow', () => {
   const decision = decideBootstrapRole(ctx({ isProduction: false, isLocalRequest: true }), '')
   assert.deepEqual(decision, { action: 'grant-admin' })
+})
+
+// ---- owner allowlist --------------------------------------------------------
+
+test('with an allowlist, only a listed address may hold admin — token or not', () => {
+  const owner = ctx({ ownersConfigured: true, isOwner: true, configuredToken: TOKEN })
+  assert.deepEqual(decideBootstrapRole(owner, TOKEN), { action: 'grant-admin' })
+
+  // The token proves "I am setting this installation up", not "let me in":
+  // holding it does not make an unlisted address an owner.
+  const stranger = ctx({ ownersConfigured: true, isOwner: false, configuredToken: TOKEN })
+  assert.deepEqual(decideBootstrapRole(stranger, TOKEN), { action: 'create-user' })
+})
+
+test('with an allowlist, an unlisted address still registers as a plain user', () => {
+  // Refusing here would be wrong now: the owner's claim is gated by their
+  // address, not by arriving before anybody else, so the slot is not contested.
+  assert.deepEqual(
+    decideBootstrapRole(ctx({ ownersConfigured: true, isOwner: false, isProduction: true }), ''),
+    { action: 'create-user' }
+  )
+  assert.deepEqual(
+    decideBootstrapRole(ctx({ ownersConfigured: true, isOwner: false, hasAdmin: true }), ''),
+    { action: 'create-user' }
+  )
+})
+
+test('with an allowlist, the local convenience never grants a non-owner', () => {
+  // The dev shortcut is about *where* the request came from, so it must not be
+  // enough to clear the owner gate.
+  assert.deepEqual(
+    decideBootstrapRole(ctx({ ownersConfigured: true, isOwner: false, isProduction: false, isLocalRequest: true }), ''),
+    { action: 'create-user' }
+  )
+  assert.deepEqual(
+    decideBootstrapRole(ctx({ ownersConfigured: true, isOwner: true, isProduction: false, isLocalRequest: true }), ''),
+    { action: 'grant-admin' }
+  )
+})
+
+test('a listed owner can still be refused by the token gate', () => {
+  // Being on the allowlist is necessary, not sufficient: on a deployment the
+  // address alone must not be enough, or knowing somebody's email would be
+  // enough to take over the installation.
+  const deployed = ctx({ ownersConfigured: true, isOwner: true, isProduction: true, isLocalRequest: false })
+  assert.equal(decideBootstrapRole(deployed, '').action, 'refuse')
+  assert.equal(decideBootstrapRole(ctx({ ownersConfigured: true, isOwner: true, configuredToken: TOKEN }), 'wrong').action, 'refuse')
+})
+
+test('with an allowlist, several owner addresses may hold admin at once', () => {
+  // Unlike the single-claim rule, an allowlist expresses a standing right, so
+  // an existing administrator no longer blocks a second owner address.
+  const secondOwner = ctx({ hasAdmin: true, ownersConfigured: true, isOwner: true, configuredToken: TOKEN })
+  assert.deepEqual(decideBootstrapRole(secondOwner, TOKEN), { action: 'grant-admin' })
 })
 
 test('readConfiguredToken treats unset and blank as "not configured"', () => {

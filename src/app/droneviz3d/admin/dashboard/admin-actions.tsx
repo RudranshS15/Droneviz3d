@@ -180,14 +180,26 @@ export function ChangePasswordButton() {
   )
 }
 
-export function UsersTable({ users, currentUserId }: { users: AdminUser[]; currentUserId: number }) {
+export function UsersTable({
+  users,
+  currentUserId,
+  ownerIds,
+  canManageUsers,
+}: {
+  users: AdminUser[]
+  currentUserId: number
+  /** ids of accounts named in OWNER_EMAILS — immutable and never removable */
+  ownerIds: number[]
+  /** false when only the owner may change roles or remove users */
+  canManageUsers: boolean
+}) {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
 
   const act = async (u: AdminUser, what: 'remove' | 'promote' | 'demote') => {
     const label = what === 'remove'
-      ? `Remove ${u.email}? This cannot be undone.`
+      ? `Remove ${u.email}? Their sessions are signed out immediately and this cannot be undone.`
       : `${what === 'promote' ? 'Promote' : 'Demote'} ${u.email}? Their sessions will be signed out.`
     if (!window.confirm(label)) return
     setError(null)
@@ -214,6 +226,10 @@ export function UsersTable({ users, currentUserId }: { users: AdminUser[]; curre
   }
 
   const isSelf = (u: AdminUser) => u.id === currentUserId
+  const isOwnerRow = (u: AdminUser) => ownerIds.includes(u.id)
+  // Role buttons follow the same permission as removal: when an allowlist is in
+  // force only the owner sees them, which is what makes every promotion the
+  // owner's own decision. Owner rows never get buttons — they are immutable.
 
   return (
     <div>
@@ -244,29 +260,42 @@ export function UsersTable({ users, currentUserId }: { users: AdminUser[]; curre
                 }`}>
                   {u.role}
                 </span>
+                {isOwnerRow(u) && (
+                  <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded border border-[#d4a053]/50 text-[#d4a053] font-medium">
+                    owner
+                  </span>
+                )}
               </td>
               <td className="py-3 pr-4 text-[12px] text-[#a8a29e] font-mono">{u.created_at}</td>
               <td className="py-3 text-right whitespace-nowrap">
-                {!isSelf(u) && (
-                  <button
-                    type="button"
-                    onClick={() => act(u, u.role === 'admin' ? 'demote' : 'promote')}
-                    disabled={busyId === u.id}
-                    aria-label={u.role === 'admin' ? `Demote ${u.email} to regular user` : `Promote ${u.email} to administrator`}
-                    className="text-[12px] text-[#a8a29e] hover:text-[#d4a053] mr-4 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a053]"
-                  >
-                    {busyId === u.id ? 'Working…' : u.role === 'admin' ? 'Demote' : 'Promote'}
-                  </button>
+                {isOwnerRow(u) ? (
+                  <span className="text-[11px] text-[#a8a29e]">protected</span>
+                ) : !canManageUsers ? (
+                  <span className="text-[11px] text-[#a8a29e]">owner&#8209;only</span>
+                ) : (
+                  <>
+                    {canManageUsers && !isSelf(u) && (
+                      <button
+                        type="button"
+                        onClick={() => act(u, u.role === 'admin' ? 'demote' : 'promote')}
+                        disabled={busyId === u.id}
+                        aria-label={u.role === 'admin' ? `Demote ${u.email} to regular user` : `Promote ${u.email} to administrator`}
+                        className="text-[12px] text-[#a8a29e] hover:text-[#d4a053] mr-4 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a053]"
+                      >
+                        {busyId === u.id ? 'Working…' : u.role === 'admin' ? 'Demote' : 'Promote'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => act(u, 'remove')}
+                      disabled={isSelf(u) || busyId === u.id}
+                      aria-label={`Remove user ${u.email} and sign out their sessions`}
+                      className="text-[12px] text-[#a8a29e] hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
+                    >
+                      Remove
+                    </button>
+                  </>
                 )}
-                <button
-                  type="button"
-                  onClick={() => act(u, 'remove')}
-                  disabled={isSelf(u) || busyId === u.id}
-                  aria-label={`Remove user ${u.email}`}
-                  className="text-[12px] text-[#a8a29e] hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
-                >
-                  Remove
-                </button>
               </td>
             </tr>
           ))}

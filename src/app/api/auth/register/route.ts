@@ -7,6 +7,7 @@ import { createUser, findUserByEmail, countAdmins } from '@/lib/db'
 import {
   decideBootstrapRole, isLocalRequest, readConfiguredToken,
 } from '@/lib/bootstrap'
+import { isOwnerEmail, readOwnerEmails } from '@/lib/owners'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -45,10 +46,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // Who may become the administrator is decided before anything is written, so
   // a refused claim leaves no trace: no account, no session, no consumed slot.
-  // See bootstrap.ts for the full rule.
+  // See bootstrap.ts and owners.ts for the full rule.
+  const ownerEmails = readOwnerEmails(process.env)
   const decision = decideBootstrapRole(
     {
       hasAdmin: countAdmins() > 0,
+      ownersConfigured: ownerEmails.length > 0,
+      isOwner: isOwnerEmail(email, ownerEmails),
       configuredToken: readConfiguredToken(process.env),
       isProduction: process.env.NODE_ENV === 'production',
       isLocalRequest: isLocalRequest(req),

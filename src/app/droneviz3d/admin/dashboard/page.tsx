@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getSessionUser } from '@/lib/auth'
 import { listUsers, sessionCount, userCount } from '@/lib/db'
+import { isOwnerEmail, readOwnerEmails } from '@/lib/owners'
 import { LogoutButton, UsersTable, ChangePasswordButton } from './admin-actions'
 
 export const dynamic = 'force-dynamic'
@@ -30,6 +31,15 @@ export default async function AdminDashboardPage() {
   const users = listUsers()
   const worker = await workerStatus()
 
+  // Owner rules (see lib/owners.ts). With an allowlist configured, the owner is
+  // the only account that can hold admin, grant it, or remove someone — and the
+  // owner account itself is untouchable from every direction.
+  const ownerEmails = readOwnerEmails(process.env)
+  const ownersConfigured = ownerEmails.length > 0
+  const actorIsOwner = isOwnerEmail(user.email, ownerEmails)
+  const ownerIds = users.filter((u) => isOwnerEmail(u.email, ownerEmails)).map((u) => u.id)
+  const canManageUsers = ownersConfigured ? actorIsOwner : true
+
   return (
     <div className="min-h-[calc(100vh-3.5rem)] flex flex-col">
       <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 pt-10 pb-20">
@@ -39,8 +49,9 @@ export default async function AdminDashboardPage() {
               Admin dashboard
             </h1>
             <p className="text-[#a8a29e] text-[14px]">
-              Signed in as <span className="text-[#e7e5e4] font-medium">{user.email}</span> ·{' '}
-              {userCount()} users · {sessionCount()} active sessions
+              Signed in as <span className="text-[#e7e5e4] font-medium">{user.email}</span>
+              {actorIsOwner && <span className="ml-2 text-[10px] text-[#d4a053] border border-[#c27a3a]/40 rounded px-1.5 py-0.5">owner</span>}
+              {' '}· {userCount()} users · {sessionCount()} active sessions
             </p>
           </div>
           <div className="flex flex-col items-start gap-3">
@@ -77,7 +88,19 @@ export default async function AdminDashboardPage() {
 
         <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/[0.08]">
           <h2 className="text-[13px] font-semibold text-[#e7e5e4] mb-4">Registered users</h2>
-          <UsersTable users={users} currentUserId={user.id} />
+          {ownersConfigured && (
+            <p className="-mt-2 mb-4 text-[11px] text-[#a8a29e] leading-relaxed max-w-2xl">
+              {actorIsOwner
+                ? 'Your address is the only one that can hold admin by default. Promote somebody only if you want them to have the dashboard — you can demote or remove them again at any time. Nobody can demote or remove you.'
+                : 'Only the owner account can change roles or remove users. You can still use everything else on this dashboard.'}
+            </p>
+          )}
+          <UsersTable
+            users={users}
+            currentUserId={user.id}
+            ownerIds={ownerIds}
+            canManageUsers={canManageUsers}
+          />
         </div>
       </div>
     </div>

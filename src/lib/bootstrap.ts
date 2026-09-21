@@ -8,8 +8,11 @@
  *
  * The rule instead:
  *
- *   - An installation that already has an administrator never grants another
- *     one through registration. Every new account is a plain user.
+ *   - When OWNER_EMAILS is configured (see owners.ts), only those addresses may
+ *     hold the admin role at all; every other registration is a plain user.
+ *   - With no allowlist configured, an installation that already has an
+ *     administrator never grants another one through registration — every new
+ *     account is a plain user.
  *   - On an installation with no administrator, claiming the admin role
  *     requires ADMIN_BOOTSTRAP_TOKEN (`openssl rand -hex 32`) to be sent with
  *     the registration and to match. Comparing digests keeps it constant-time.
@@ -33,6 +36,10 @@ export const BOOTSTRAP_TOKEN_ENV = 'ADMIN_BOOTSTRAP_TOKEN'
 export interface BootstrapContext {
   /** whether any account already holds the admin role */
   hasAdmin: boolean
+  /** OWNER_EMAILS is configured, so the admin role is restricted to owners */
+  ownersConfigured: boolean
+  /** the address being registered is one of those owners */
+  isOwner: boolean
   /** the configured ADMIN_BOOTSTRAP_TOKEN, or null when unset/blank */
   configuredToken: string | null
   /** NODE_ENV === 'production' */
@@ -49,16 +56,21 @@ export type BootstrapDecision =
   /** create nothing — the caller returns `status` with `error` */
   | { action: 'refuse'; status: number; error: string }
 
-/** Wrong or missing token on an installation that expects one. */
+/**
+ * Wrong or missing token. Deliberately identical whether the token was absent
+ * or merely wrong, so this cannot be used to probe for a configured token.
+ */
 const TOKEN_REQUIRED =
-  'This installation has no administrator yet — registration requires the bootstrap token.'
+  'This registration requires the bootstrap token — check ADMIN_BOOTSTRAP_TOKEN and try again.'
 
 /**
- * No admin, no token, not local. Worded for the operator who is the legitimate
- * reader of this message; it reveals no more than the 403 already does.
+ * No token configured, so no admin can be granted here. Worded for the operator
+ * who is the legitimate reader of this message; it reveals no more than the 403
+ * already does. Note this is reachable both when no admin exists yet and when a
+ * configured owner is trying to claim the role on a deployment that has one.
  */
 const SETUP_REQUIRED =
-  'This installation has no administrator yet and no bootstrap token is configured. ' +
+  'No bootstrap token is configured, so administrator registration is disabled. ' +
   'Set ADMIN_BOOTSTRAP_TOKEN on the server, then register with it.'
 
 /**
@@ -88,8 +100,17 @@ export function decideBootstrapRole(
   ctx: BootstrapContext,
   providedToken: string
 ): BootstrapDecision {
-  // An administrator already exists: registration can never escalate.
-  if (ctx.hasAdmin) return { action: 'create-user' }
+  // The owner gate. With an allowlist configured, an address that is not on it
+  // can never hold admin — no token, no origin and no cleverness changes that.
+  // Letting such an address register as a plain user is harmless, because the
+  // owner's own claim is gated by their address rather than by arriving first.
+  const mayHoldAdmin = ctx.ownersConfigured ? ctx.isOwner : true
+  if (!mayHoldAdmin) return { action: 'create-user' }
+
+  // Without an allowlist there is exactly one admin to give away, and the
+  // bootstrap token exists to gate that single claim. With an allowlist, every
+  // configured owner address may hold the role.
+  if (!ctx.ownersConfigured && ctx.hasAdmin) return { action: 'create-user' }
 
   if (ctx.configuredToken) {
     return tokensMatch(providedToken, ctx.configuredToken)
@@ -97,7 +118,9 @@ export function decideBootstrapRole(
       : { action: 'refuse', status: 403, error: TOKEN_REQUIRED }
   }
 
-  // Unconfigured token: the local first-run convenience, and nothing else.
+  // Unconfigured token: the local first-run convenience, and nothing else. A
+  // deployed instance still refuses, so a configured owner address is not by
+  // itself enough to claim admin in production.
   if (!ctx.isProduction && ctx.isLocalRequest) return { action: 'grant-admin' }
 
   return { action: 'refuse', status: 403, error: SETUP_REQUIRED }

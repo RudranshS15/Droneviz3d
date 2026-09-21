@@ -7,6 +7,11 @@ import {
   deleteUserById, deleteUserSessions, findUserById, countAdmins, setUserRole,
 } from '@/lib/db'
 import type { SessionUser, UserRole } from '@/lib/db'
+import { isOwnerEmail, readOwnerEmails } from '@/lib/owners'
+
+function conflict(message: string): NextResponse {
+  return NextResponse.json({ error: message }, { status: 409, headers: { 'Cache-Control': 'no-store' } })
+}
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -42,6 +47,19 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const target = findUserById(targetId)
   if (!target) {
     return NextResponse.json({ error: 'User not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } })
+  }
+
+  const ownerEmails = readOwnerEmails(process.env)
+  const ownersConfigured = ownerEmails.length > 0
+
+  // Removing access is the owner's decision alone once an allowlist exists.
+  if (ownersConfigured && !isOwnerEmail(actor.email, ownerEmails)) {
+    return forbidden('Only the owner account can remove a user')
+  }
+  // The owner account itself is immutable for everyone — every other admin, and
+  // the owner's own session — so the installation can never be orphaned.
+  if (isOwnerEmail(target.email, ownerEmails)) {
+    return conflict('The owner account cannot be removed')
   }
 
   // Guards: you cannot delete your own account, and the last admin cannot be removed.
@@ -92,6 +110,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!target) {
     return NextResponse.json({ error: 'User not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } })
   }
+
+  const ownerEmails = readOwnerEmails(process.env)
+  const ownersConfigured = ownerEmails.length > 0
+
+  // Granting privileges is the owner's decision alone once an allowlist exists.
+  // This is the whole of "nobody else is an admin until I say so": the owner is
+  // the only actor who can pass this check, so the only source of a new admin is
+  // the owner deliberately promoting one. A promoted admin gets the dashboard,
+  // but cannot change roles, remove anyone, or touch the owner.
+  if (ownersConfigured && !isOwnerEmail(actor.email, ownerEmails)) {
+    return forbidden('Only the owner account can change roles')
+  }
+  // The owner can never be demoted, so a promoted admin cannot turn on them.
+  if (isOwnerEmail(target.email, ownerEmails)) {
+    return conflict('The owner account cannot be demoted or changed')
+  }
+
   if (target.id === actor.id) {
     return NextResponse.json(
       { error: 'You cannot change your own role' },
