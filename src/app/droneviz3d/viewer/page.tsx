@@ -416,7 +416,7 @@ export default function ViewerPage() {
 
           {sceneModel.points.length === 0 && (
             <div className="absolute inset-x-0 top-4 mx-auto w-fit px-3 py-1.5 rounded-lg bg-black/80 text-[11px] text-[#e7e5e4]">
-              No point cloud in this session — showing the flight path only.
+              No point cloud stored — showing the flight path only.
             </div>
           )}
 

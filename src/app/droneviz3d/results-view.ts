@@ -6,7 +6,7 @@
  *
  *   1. What is the state of this reconstruction? The page can be reached with
  *      nothing processed, mid-run, after a run that produced no model, or from a
- *      session where the point cloud was too large to restore. Each deserves a
+ *      visit where the point cloud was too large to restore. Each deserves a
  *      different, explicit message — and none of them should look like a
  *      successful survey.
  *   2. Which numbers were measured, and which were synthesized? Object counts
@@ -37,11 +37,11 @@ export interface StatusInput {
   hasMetrics: boolean
   pointCount: number
   objectCount: number
-  restoredFromSession: boolean
+  restoredFromStorage: boolean
 }
 
 export function deriveReconstructionStatus(input: StatusInput): ReconstructionStatus {
-  const { processingComplete, isProcessing, hasMetrics, pointCount, objectCount, restoredFromSession } = input
+  const { processingComplete, isProcessing, hasMetrics, pointCount, objectCount, restoredFromStorage } = input
   const objects = `${objectCount} grounded object${objectCount === 1 ? '' : 's'}`
   const points = `${pointCount.toLocaleString()} points`
 
@@ -49,7 +49,7 @@ export function deriveReconstructionStatus(input: StatusInput): ReconstructionSt
     return {
       id: 'empty', tone: 'neutral', canExport: false,
       title: 'No reconstruction yet',
-      detail: 'Upload drone footage and flight metadata to generate a model. Nothing has been processed in this session.',
+      detail: 'Upload drone footage and flight metadata to generate a model. Nothing has been processed in this browser yet.',
     }
   }
 
@@ -73,15 +73,15 @@ export function deriveReconstructionStatus(input: StatusInput): ReconstructionSt
     return {
       id: 'partial', tone: 'warning', canExport: false,
       title: 'Metrics restored without geometry',
-      detail: 'This session restored the run summary but not the point cloud — it was too large for browser session storage. The numbers below describe the original run; exports and the 3D viewer need the geometry, so re-run the upload to get them back.',
+      detail: 'This browser restored the run summary but not the point cloud — the model was too large to keep in local storage. The numbers below describe the original run; exports and the 3D viewer need the geometry, so re-run the upload to get them back.',
     }
   }
 
-  if (restoredFromSession) {
+  if (restoredFromStorage) {
     return {
       id: 'restored', tone: 'success', canExport: true,
-      title: `Restored from this session — ${points}, ${objects}`,
-      detail: 'This browser tab restored the finished model instead of recomputing it. The model is the same one generated from your upload, not a new run.',
+      title: `Restored in this browser — ${points}, ${objects}`,
+      detail: 'This browser restored the finished model instead of recomputing it. It is the same model generated from your upload, not a new run, and it is kept only in this browser until you press Reset.',
     }
   }
 

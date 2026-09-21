@@ -37,7 +37,7 @@ function ConfidenceDistribution({ points }: { points: { confidence: number }[] }
         Same scale as the 3D viewer — {total.toLocaleString()} generated points.
       </p>
       {total === 0 ? (
-        <p className="text-[11px] text-[#a8a29e]">No points in this session, so there is nothing to chart.</p>
+        <p className="text-[11px] text-[#a8a29e]">No points stored, so there is nothing to chart.</p>
       ) : (
         <div className="space-y-4">
           {counts.map(({ band, count, share }) => (
@@ -145,7 +145,7 @@ export default function ResultsPage() {
   const router = useRouter()
   const {
     processingComplete, isProcessing, metrics, pointCloud, annotations, trajectory,
-    trackedObjects, bounds, videoFile, videoName, metadata, restoredFromSession, reset,
+    trackedObjects, bounds, videoFile, videoName, metadata, restoredFromStorage, reset,
   } = useDroneVizStore()
 
   const sceneModel = useMemo(
@@ -159,7 +159,7 @@ export default function ResultsPage() {
     hasMetrics: !!metrics,
     pointCount: pointCloud.length,
     objectCount: trackedObjects.length,
-    restoredFromSession,
+    restoredFromStorage,
   })
 
   const groups = buildMetricGroups({ metrics, trackedObjects })
@@ -205,7 +205,7 @@ export default function ResultsPage() {
     setExportError(null)
     if (!status.canExport) {
       setExportError(
-        'There is no point cloud in this session, so there is nothing to export. Re-run the upload to regenerate the geometry.'
+        'There is no point cloud stored, so there is nothing to export. Re-run the upload to regenerate the geometry.'
       )
       return
     }
@@ -213,13 +213,13 @@ export default function ResultsPage() {
       exportAs(format, exportPayload)
     } catch (error) {
       setExportError(
-        `Export failed: ${error instanceof Error ? error.message : 'the browser blocked the download'}. Your model is still in this tab — try again, or copy the metrics above first.`
+        `Export failed: ${error instanceof Error ? error.message : 'the browser blocked the download'}. Your model is still stored in this browser — try again, or copy the metrics above first.`
       )
     }
   }
 
   const fileName = videoFile?.name ?? videoName
-  const fileNote = videoFile ? 'processed' : videoName ? 'restored from this session' : null
+  const fileNote = videoFile ? 'processed' : videoName ? 'restored in this browser' : null
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] flex flex-col">
@@ -231,7 +231,7 @@ export default function ResultsPage() {
         </nav>
         <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-[#e7e5e4] mb-2">Reconstruction results</h1>
         <p className="text-[#a8a29e] text-[14px] mb-6">
-          {fileName ? `${fileName} — ${fileNote}` : 'No upload in this session'}
+          {fileName ? `${fileName} — ${fileNote}` : 'No video recorded for this model'}
         </p>
 
         {/* Status first: the user must know what they are looking at before any number. */}
@@ -248,7 +248,7 @@ export default function ResultsPage() {
               <p className="text-[11px] text-[#a8a29e]">
                 {status.canExport
                   ? 'The generated model, drawn in its East-North-Up frame. Open the viewer to inspect individual detections.'
-                  : 'No geometry to preview in this session.'}
+                  : 'No geometry to preview.'}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -276,7 +276,7 @@ export default function ResultsPage() {
                   ? 'Upload drone footage to generate a model.'
                   : status.id === 'running'
                     ? 'The pipeline is still running — the preview appears when it finishes.'
-                    : 'The point cloud is not available in this session, so there is nothing to draw.'}
+                    : 'The point cloud is not available, so there is nothing to draw.'}
               </div>
             )}
           </div>
@@ -388,7 +388,8 @@ export default function ResultsPage() {
                 ))}
               </dl>
               <p className="text-[11px] text-[#a8a29e] mt-3">
-                This metadata stayed in your browser. Nothing was uploaded to a server.
+                This metadata stayed in your browser and is kept here with the model until you
+                reset — nothing was uploaded to a server.
               </p>
             </details>
           </div>
@@ -412,12 +413,24 @@ export default function ResultsPage() {
             </Link>
             <button
               type="button"
-              onClick={() => { reset(); router.push('/droneviz3d/upload') }}
+              onClick={() => {
+                // Deleting a stored model is irreversible — nothing is on a server, so
+                // there is nothing to restore it from. Ask before discarding.
+                if (status.canExport && !window.confirm('Delete this model from this browser? It cannot be recovered — export it first if you want to keep it.')) return
+                reset()
+                router.push('/droneviz3d/upload')
+              }}
+              aria-describedby="reset-model-note"
               className="block w-full py-3 rounded-xl border border-[#292524] text-[#a8a29e] font-medium text-[14px] text-center hover:bg-[#1c1917]/50 hover:text-[#e7e5e4] transition-colors"
             >
-              Start a new reconstruction
+              Reset — delete this model from this browser
             </button>
           </div>
+          <p id="reset-model-note" className="text-[11px] text-[#a8a29e] mt-3 leading-relaxed">
+            Reset is what the privacy policy calls erasure: it permanently deletes the stored model,
+            its detections and the flight metadata from this browser. There is no copy on a server, so
+            it cannot be recovered — export the model first if you want to keep it.
+          </p>
         </div>
       </div>
     </div>

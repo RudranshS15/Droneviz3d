@@ -30,7 +30,7 @@ const METRICS: ReconstructionMetrics = {
 function status(overrides: Partial<StatusInput> = {}) {
   return deriveReconstructionStatus({
     processingComplete: true, isProcessing: false, hasMetrics: true,
-    pointCount: 12142, objectCount: 49, restoredFromSession: false,
+    pointCount: 12142, objectCount: 49, restoredFromStorage: false,
     ...overrides,
   })
 }
@@ -66,12 +66,12 @@ test('a run still in progress is distinguished from a failed one', () => {
   assert.equal(failed.canExport, false)
 })
 
-test('metrics without geometry are called out as a partial restore', () => {
-  const s = status({ pointCount: 0, restoredFromSession: true })
+test('metrics restored without their geometry are called out as a partial restore', () => {
+  const s = status({ pointCount: 0, restoredFromStorage: true })
   assert.equal(s.id, 'partial')
   assert.equal(s.tone, 'warning')
   assert.equal(s.canExport, false, 'nothing to export without a point cloud')
-  assert.ok(s.detail.includes('session storage'))
+  assert.ok(s.detail.includes('local storage'))
 })
 
 test('a complete run says what it produced', () => {
@@ -83,12 +83,15 @@ test('a complete run says what it produced', () => {
   assert.ok(s.detail.includes('synthesized'), 'the synthesized part is stated on the page')
 })
 
-test('a restored session is labelled instead of passed off as a fresh run', () => {
-  const s = status({ restoredFromSession: true })
+test('a restored model is labelled instead of passed off as a fresh run', () => {
+  const s = status({ restoredFromStorage: true })
   assert.equal(s.id, 'restored')
   assert.equal(s.canExport, true)
-  assert.ok(s.title.startsWith('Restored from this session'))
+  assert.ok(s.title.startsWith('Restored in this browser'))
   assert.ok(s.detail.includes('instead of recomputing'))
+  // A restored model is durable, so the page must say how to get rid of it rather
+  // than implying closing the tab does.
+  assert.ok(s.detail.includes('Reset'))
 })
 
 test('status titles handle a single object without pluralising badly', () => {
