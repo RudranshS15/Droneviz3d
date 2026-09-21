@@ -263,6 +263,12 @@ export default function LandingPage() {
             </Link>
           </div>
 
+          {/* Guests need no account, so say so before the first click. */}
+          <p className={`mt-5 text-[13px] text-[#a8a29e] transition-opacity duration-700 delay-300 ${heroVisible ? 'opacity-100' : 'opacity-0'}`}>
+            No account needed — DroneViz3D is open to guests. Everything runs on your device,
+            so there is nothing to sign up for before you upload.
+          </p>
+
           {/* Stats strip */}
           <dl className={`grid grid-cols-2 sm:grid-cols-4 gap-6 mt-16 transition-all duration-700 delay-500 motion-reduce:transition-none ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
             {[

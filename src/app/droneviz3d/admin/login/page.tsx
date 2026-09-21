@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
 type Mode = 'signin' | 'register'
@@ -59,7 +60,7 @@ export default function AdminLoginPage() {
         <h1 className="text-2xl font-bold text-[#e7e5e4] mb-1">Admin access</h1>
         <p className="text-[13px] text-[#a8a29e] mb-6">
           {mode === 'signin'
-            ? 'Sign in to manage this DroneViz3D installation.'
+            ? 'This sign-in is for the installation\u2019s administrator only.'
             : 'Create an account. The first account on a new installation becomes the administrator — it needs the bootstrap token when the server asks for one.'}
         </p>
 
@@ -151,10 +152,31 @@ export default function AdminLoginPage() {
           </button>
         </form>
 
-        <p className="mt-5 text-[11px] text-[#a8a29e]/80 leading-relaxed">
+        <p className="mt-5 text-[11px] text-[#a8a29e] leading-relaxed">
           Passwords are hashed with argon2id and stored only on this machine. Sessions are
           httpOnly cookies that expire after 7 days.
         </p>
+
+        {/*
+          The only screen in the app that asks for an email. Everything a visitor
+          actually wants — upload, viewer, results — needs no account, so the guest
+          way out belongs right here rather than behind a menu.
+        */}
+        <div className="mt-6 pt-5 border-t border-white/[0.08]">
+          <h2 className="text-[12px] font-semibold text-[#e7e5e4] mb-1.5">Using DroneViz3D as a guest</h2>
+          <p className="text-[12px] text-[#a8a29e] leading-relaxed mb-3">
+            Uploading a video, the 3D viewer and the results page are open to everyone and need
+            no account — nothing you load leaves your device. You only need to sign in here to
+            administer the installation itself.
+          </p>
+          <Link
+            href="/droneviz3d"
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[#d4a053] hover:text-[#e0b36e] underline underline-offset-2 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a053]"
+          >
+            Continue as a guest
+            <span aria-hidden="true">→</span>
+          </Link>
+        </div>
       </div>
     </div>
   )
