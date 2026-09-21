@@ -9,18 +9,19 @@ export default function CookiesPage() {
   return (
     <LegalPage
       title="Cookies Policy"
-      intro="DroneViz3D sets no cookies and no similar tracking technologies. This page documents that fact, why you are not asked for cookie consent, and what would change if tracking were ever added."
+      intro="DroneViz3D sets no cookies and no similar tracking technologies. This page documents that fact, what the app does store in your browser (one entry, your own model, deleted on request), why you are not asked for cookie consent, and what would change if tracking were ever added."
       breadcrumb="Cookies Policy"
     >
       <section>
         <h2>1. Do we use cookies? No.</h2>
         <p>
           We do not set, read, or share any cookies — functional, analytics, advertising, or otherwise. We
-          also do not use localStorage, IndexedDB, service workers, or fingerprinting for tracking. The only
-          browser storage we use is a single <strong>sessionStorage</strong> entry holding your generated 3D
-          model so it survives a page reload within the same tab; it is scoped to that tab, contains only
-          your own reconstruction, and is automatically deleted when the tab closes (&sect;3). Nothing about
-          your visit is recorded by us, because the Service has no backend that receives it.
+          also do not use IndexedDB, service workers, or fingerprinting for tracking. The only browser
+          storage we use is a single <strong>localStorage</strong> entry in this site&rsquo;s origin holding
+          your generated 3D model, so you can come back to it without creating an account. It contains only
+          your own reconstruction and the flight metadata it was georeferenced with, never the video file,
+          and you can delete it in one click with the <strong>Reset</strong> button (&sect;3). Nothing about
+          your visit is recorded by us: this site runs no analytics and sends no usage data anywhere.
         </p>
       </section>
 
@@ -28,28 +29,40 @@ export default function CookiesPage() {
         <h2>2. Why there is no cookie consent banner</h2>
         <p>
           Consent banners are legally required when a site stores or accesses information on your device for
-          non-essential purposes (e.g. analytics or advertising under the EU ePrivacy regime, and tracking
-          under India&rsquo;s DPDP Act, 2023 consent framework). Since DroneViz3D sets nothing and reads
-          nothing from your device, there is nothing to consent to — so adding a banner would be misleading.
-          If that ever changes, a granular consent banner will appear <em>before</em> any non-essential
-          storage begins.
+          purposes that are not strictly necessary to deliver the service you asked for (e.g. analytics or
+          advertising under the EU ePrivacy regime, and tracking under India&rsquo;s DPDP Act, 2023 consent
+          framework). The one entry DroneViz3D writes exists solely to keep the model you just generated
+          available when you return — the feature itself, not a secondary purpose — which is the
+          &ldquo;strictly necessary&rdquo; ground such rules carve out.
+        </p>
+        <p>
+          We disclose it here anyway rather than rely on that exemption silently, and we give you a one-click
+          way to delete it. If a future version ever adds a purpose that is <em>not</em> strictly necessary,
+          a granular consent banner will appear <em>before</em> any such storage begins.
         </p>
       </section>
 
       <section>
-        <h2>3. What the app stores in your browser (session only)</h2>
+        <h2>3. What the app stores in your browser</h2>
         <p>
-          While the tab is open, the app keeps your uploaded video and the metadata you typed in
+          Your uploaded video and the file handle the browser gives it live in
           <strong>in-memory page state</strong> — functionally equivalent to a variable in the running
-          program: never written to disk, never transmitted, and gone when the tab closes.
+          program. They are never written to storage, never transmitted, and are gone when the tab closes.
         </p>
         <p>
-          The <strong>generated 3D model</strong> (point cloud, metrics, and the flight metadata used) is
-          additionally written to a single <strong>sessionStorage</strong> key so it survives a page reload
-          within the same tab. sessionStorage is tab-scoped, contains only your own reconstruction data, is
-          not sent to any server, and is cleared automatically by the browser when the tab closes. The raw
-          video is never stored in sessionStorage (only its file name). This is session-scoped program state,
-          not tracking, and is not covered by cookie rules.
+          The <strong>generated 3D model</strong> — point cloud, per-object detections, the run summary, and
+          the flight metadata it was georeferenced with — is written to a single
+          <strong>localStorage</strong> key (<code>droneviz3d-model</code>) so a reload, a later visit, or a
+          restart of your browser does not throw your model away. Anything typed into the upload form is
+          part of that entry, so it survives too; the raw video never is, and only its file name is kept.
+        </p>
+        <p>
+          That entry is not a cookie, is never sent to any server, and is readable only by this site in this
+          browser. It stays on your device until you press <strong>Reset</strong> on the Results page, which
+          deletes the key outright — not just the on-screen copy. Clearing site data in your browser’s
+          settings removes it as well. Because the data is local to your device and holds location
+          coordinates you entered yourself, treat a shared computer the way you would any downloaded file and
+          press Reset when you are finished.
         </p>
       </section>
 

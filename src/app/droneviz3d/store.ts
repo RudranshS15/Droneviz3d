@@ -47,14 +47,14 @@ export interface DroneVizState {
   /** user consent to process the uploaded video + metadata (required to start) */
   dataConsent: boolean
   /**
-   * Set once when this browser session rehydrates a finished reconstruction from
-   * sessionStorage. Never persisted: it describes where the data came from, not
-   * the data. The results page uses it to say so instead of implying a fresh run.
+   * Set once when a finished reconstruction is rehydrated from this browser's
+   * storage. Never persisted: it describes where the data came from, not the
+   * data. The results page uses it to say so instead of implying a fresh run.
    */
-  restoredFromSession: boolean
+  restoredFromStorage: boolean
   markRestored: () => void
   /**
-   * True once sessionStorage rehydration has settled (or is known to be empty).
+   * True once storage rehydration has settled (or is known to be empty).
    * Never persisted. Page guards must wait for this before deciding that there is
    * no model — otherwise a hard load of a viewer/results URL races rehydration
    * and bounces the user to Upload even though their model is still stored.
@@ -80,11 +80,24 @@ const initialMetadata: FlightMetadata = {
 }
 
 // ---------------------------------------------------------------------------
-// sessionStorage persistence for the finished reconstruction
+// Browser-local persistence for the finished reconstruction
+//
+// localStorage rather than sessionStorage: a guest has no account to come back
+// to, so the model has to outlive the tab or "come back to your model" means
+// nothing. The cost is that it now stays on the device until the user removes
+// it — so Reset deletes the stored entry outright instead of only blanking the
+// in-memory state, and the privacy and cookies policies describe it. See the
+// erasure and withdrawal sections there before weakening that.
+//
+// localStorage is shared by every tab of this origin, so two tabs see the same
+// model. That matches the app, which keeps one reconstruction per visit.
 // ---------------------------------------------------------------------------
 
 const PERSIST_KEY = 'droneviz3d-model'
-/** sessionStorage quota is ~5 MB; keep headroom for other keys. */
+/**
+ * localStorage gives ~5 MB per origin, shared with any other keys this site
+ * uses; keep headroom so one write can never be the reason another fails.
+ */
 const MAX_PERSISTED_BYTES = 3_500_000
 
 type PersistedSlice = Pick<
@@ -98,7 +111,8 @@ type PersistedSlice = Pick<
  * Points are stored as one flat array of integers — x/y/z in millimeters,
  * confidence in 0.001 — instead of an array of {x,y,z,r,g,b,confidence}
  * objects. Same fidelity to the millimeter, roughly a third of the JSON size,
- * so the default ~12k-point demo model fits easily within sessionStorage.
+ * so the default ~12k-point demo model lands around half a megabyte — well
+ * inside the budget below, with room for a considerably larger flight.
  */
 function normalizeState(state: Record<string, unknown>): Record<string, unknown> {
   const pts = state.pointCloud as Point3D[] | undefined
@@ -135,26 +149,28 @@ function denormalizeState(state: Record<string, unknown>): Record<string, unknow
 }
 
 /**
- * Storage adapter: quantizes on write, restores on read. If a model exceeds
- * the sessionStorage budget, the point cloud is dropped (with a console
- * warning) instead of throwing a QuotaExceededError — the metrics,
- * trajectory, and annotations still survive the reload.
- */
-/**
- * Storage adapter: quantizes on write, restores on read. If a model exceeds
- * the sessionStorage budget, the point cloud is dropped (with a console
- * warning) instead of throwing a QuotaExceededError — the metrics,
- * trajectory, and annotations still survive the reload.
+ * Storage adapter: quantizes on write, restores on read. If a model exceeds the
+ * budget the point cloud is dropped — with a console warning, and with the
+ * results page saying so — rather than throwing a QuotaExceededError, so the
+ * metrics, trajectory and annotations still come back.
  *
- * `window` is null-checked so module evaluation during SSR can never throw;
- * on the server there is simply no storage.
+ * Nothing is written until there is a finished model to write. The middleware
+ * calls `setItem` on every state change, and a visitor who merely opens the
+ * upload form has a draft, not a model — persisting that would contradict the
+ * policies (which describe one entry holding your generated model) and would mean
+ * the browser holds flight metadata for someone who never generated anything.
+ * So a draft *removes* the entry instead: the stored state is either a real
+ * finished model or absent, and a one-click Reset stays exactly what it says.
+ *
+ * `window` is null-checked so module evaluation during SSR can never throw; on
+ * the server there is simply no storage.
  */
-const sessionStorageSafe = typeof window !== 'undefined' ? window.sessionStorage : null
+const browserStorage = typeof window !== 'undefined' ? window.localStorage : null
 
-const sessionStore: PersistStorage<DroneVizState> = {
+const browserStore: PersistStorage<DroneVizState> = {
   getItem: (name) => {
-    if (!sessionStorageSafe) return null
-    const raw = sessionStorageSafe.getItem(name)
+    if (!browserStorage) return null
+    const raw = browserStorage.getItem(name)
     if (!raw) return null
     try {
       const parsed = JSON.parse(raw) as StorageValue<DroneVizState>
@@ -165,25 +181,29 @@ const sessionStore: PersistStorage<DroneVizState> = {
     }
   },
   setItem: (name, value) => {
-    if (!sessionStorageSafe) return
+    if (!browserStorage) return
     try {
       const state = value.state as unknown as Record<string, unknown>
+      if (state.processingComplete !== true) {
+        browserStorage.removeItem(name)
+        return
+      }
       const points = state.pointCloud as Point3D[] | undefined
       const normalized = { ...value, state: normalizeState(state) }
       const serialized = JSON.stringify(normalized)
       if (serialized.length > MAX_PERSISTED_BYTES && Array.isArray(points) && points.length > 0) {
-        console.warn('[DroneViz3D] Model too large for sessionStorage — the point cloud will not survive a page reload.')
-        sessionStorageSafe.setItem(name, JSON.stringify({ ...normalized, state: { ...state, pointCloud: [] } }))
+        console.warn('[DroneViz3D] Model too large to keep in this browser — the point cloud will not come back on your next visit.')
+        browserStorage.setItem(name, JSON.stringify({ ...normalized, state: { ...state, pointCloud: [] } }))
         return
       }
-      sessionStorageSafe.setItem(name, serialized)
+      browserStorage.setItem(name, serialized)
     } catch {
       // Quota exceeded or storage disabled: the model simply won't persist.
-      try { sessionStorageSafe.removeItem(name) } catch { /* ignore */ }
+      try { browserStorage.removeItem(name) } catch { /* ignore */ }
     }
   },
   removeItem: (name) => {
-    if (sessionStorageSafe) sessionStorageSafe.removeItem(name)
+    if (browserStorage) browserStorage.removeItem(name)
   },
 }
 
@@ -217,10 +237,10 @@ export const useDroneVizStore = create<DroneVizState>()(
       pointCloud: [], trajectory: [], annotations: [], metrics: null,
       trackedObjects: [], bounds: null,
       dataConsent: false,
-      restoredFromSession: false,
+      restoredFromStorage: false,
       hydrated: false,
 
-      markRestored: () => set({ restoredFromSession: true }),
+      markRestored: () => set({ restoredFromStorage: true }),
       markHydrated: () => set({ hydrated: true }),
 
       setVideoFile: (file) => {
@@ -252,9 +272,9 @@ export const useDroneVizStore = create<DroneVizState>()(
         const result: ValidationResult = validateFlightData(metadata as RawFlightData)
         if (!result.ok) { set({ validationErrors: result.errors.map((e) => e.message) }); return false }
 
-        // A new run is by definition fresh, even if the previous model in this
-        // tab came back from sessionStorage.
-        set({ validationErrors: [], isProcessing: true, processingComplete: false, steps: createInitialSteps(), currentStep: 0, restoredFromSession: false })
+        // A new run is by definition fresh, even if the previous model came back
+        // from this browser's storage.
+        set({ validationErrors: [], isProcessing: true, processingComplete: false, steps: createInitialSteps(), currentStep: 0, restoredFromStorage: false })
 
         // Stage 1: staged pipeline visualization. Stage 2 (onComplete): real
         // reconstruction driven by LocateAnything-3B detections.
@@ -336,14 +356,21 @@ export const useDroneVizStore = create<DroneVizState>()(
 
       completeProcessing: () => set({ isProcessing: false, processingComplete: true }),
 
-      reset: () => set({
-        videoFile: null, videoPreview: null, videoDurationSec: 0, videoName: null,
-        metadata: initialMetadata, validationErrors: [],
-        steps: createInitialSteps(), currentStep: 0, isProcessing: false, processingComplete: false,
-        pointCloud: [], trajectory: [], annotations: [], metrics: null,
-        trackedObjects: [], bounds: null, restoredFromSession: false,
-        // Keep the user's consent decision; it is per-browser, not per-upload.
-      }),
+      reset: () => {
+        set({
+          videoFile: null, videoPreview: null, videoDurationSec: 0, videoName: null,
+          metadata: initialMetadata, validationErrors: [],
+          steps: createInitialSteps(), currentStep: 0, isProcessing: false, processingComplete: false,
+          pointCloud: [], trajectory: [], annotations: [], metrics: null,
+          trackedObjects: [], bounds: null, restoredFromStorage: false,
+          // Keep the user's consent decision; it is per-browser, not per-upload.
+        })
+        // The write above already drops the entry (nothing is stored without a
+        // finished model), but delete the key explicitly as well. Both policies
+        // tell the user Reset erases their data from this browser, so the key must
+        // not depend on that rule continuing to hold.
+        browserStore.removeItem(PERSIST_KEY)
+      },
     }),
     {
       name: PERSIST_KEY,
@@ -365,7 +392,7 @@ export const useDroneVizStore = create<DroneVizState>()(
         metadata: s.metadata,
       }) as unknown as DroneVizState,
       migrate: (persisted) => sanitizePersisted(persisted) as unknown as DroneVizState,
-      storage: sessionStore,
+      storage: browserStore,
       // Rehydration runs on the client. If a finished model came back, flag it so
       // the UI can be explicit about the source, and record that hydration is
       // done so guards can stop deferring.

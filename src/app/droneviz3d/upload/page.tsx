@@ -260,16 +260,16 @@ export default function UploadPage() {
                         keyframes to the operator-run LocateAnything-3B inference worker for grounding, for the
                         sole purpose of generating the 3D model. The raw video is never uploaded; keyframes are
                         transmitted only while processing and are not stored. I can withdraw consent at any time
-                        by closing the tab or pressing Reset. I confirm I am legally permitted to process this
-                        footage. See our{' '}
+                        by pressing Reset, which also deletes the generated model from this browser. I confirm I
+                        am legally permitted to process this footage. See our{' '}
                       </>
                     ) : (
                       <>
                         I consent to DroneViz3D processing this video and the flight metadata I entered,{' '}
                         <strong className="text-[#e7e5e4]">on my device only</strong>, for the sole purpose of
-                        generating the 3D model. I understand the video is never uploaded, and that I can withdraw
-                        consent at any time by closing the tab or pressing Reset. I confirm I am legally permitted
-                        to process this footage. See our{' '}
+                        generating the 3D model. I understand the video is never uploaded; the model is kept in
+                        this browser so I can come back to it, and pressing Reset deletes it, which is how I
+                        withdraw consent. I confirm I am legally permitted to process this footage. See our{' '}
                       </>
                     )}
                     <Link href="/droneviz3d/legal/privacy" className="text-[#d4a053] underline">Privacy Policy</Link> and{' '}

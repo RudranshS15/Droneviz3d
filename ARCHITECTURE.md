@@ -49,7 +49,7 @@ the model is synthesized from detections.
 | `scene.ts` | Scene composition: bounds incl. near-flight-path, layer model, path-fit | Pure |
 | `confidence.ts` | The single confidence scale (thresholds + colours + labels) | One definition shared by viewer and results |
 | `results-view.ts` | Derived results state: status id, measured vs estimated, empty/partial/restored presentation | Pure |
-| `store.ts` | Zustand store, pipeline orchestration, `sessionStorage` persistence | Only module that touches browser storage |
+| `store.ts` | Zustand store, pipeline orchestration, `localStorage` persistence | Only module that touches browser storage |
 
 ### Server
 
@@ -164,7 +164,7 @@ error state with the failing format named.
 | Ground-plane projection | Objects are placed at the ground plane, so true height above ground is estimated | Per-object height from multi-view ray intersection |
 | Simulated adapter fallback | Runs without a worker produce plausible-looking but synthetic detections | Always-on GPU worker; the results status already distinguishes these runs |
 | Rate limiter is SQLite-backed | Correct across instances sharing a volume; wrong across hosts with no shared disk | Redis behind the same interface (see `SECURITY.md`) |
-| `sessionStorage` persistence | Model survives reloads but not a new tab or browser restart | Accepted trade-off: privacy-first, no cross-session storage |
+| Model persists in `localStorage` | A guest's model outlives the tab, so it also outlives the visit — on a shared machine it stays readable until Reset | Accepted trade-off for guest use (no account to return with); Reset deletes it and both policies state it plainly. The first-party origin boundary is the only thing keeping it out of another site's reach |
 
 ---
 
@@ -184,7 +184,7 @@ runner — no browser, no extra framework.
 | `scene.test.ts` | Bounds incl. near path, path-fit view |
 | `confidence.test.ts` | Band contiguity, coverage of [0,1], colour distinctness |
 | `results-view.test.ts` | Every status state and the measured/estimated split |
-| `store-persistence.test.ts` | Compact encode/decode round-trip, oversized-model degradation |
+| `store-persistence.test.ts` | Compact encode/decode round-trip, oversized-model degradation, a draft writing nothing, a later visit restoring a stored model, Reset erasing it for good |
 
 `npm run verify` runs typecheck + lint + test. CI (`.github/workflows/ci.yml`) requires all
 three on every push, so the orientation and framing contracts cannot silently regress.

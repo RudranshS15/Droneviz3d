@@ -26,10 +26,10 @@ export default function PrivacyPolicyPage() {
         <h2>2. The short version</h2>
         <ul>
           <li>Your video file is processed <strong>entirely in your browser</strong>. It is never uploaded to us or to any third party. In an optional &ldquo;worker&rdquo; deployment (see &sect;5), sampled keyframes — never the raw video — are sent to an inference worker operated by the person running the deployment.</li>
-          <li>Flight metadata you type in stays in your browser&rsquo;s memory for the session and is not transmitted anywhere.</li>
+          <li>Flight metadata you type in is used only on your device. It is not transmitted anywhere, and it is kept in this browser&rsquo;s local storage alongside the model it georeferences so you can return to that model (&sect;3).</li>
           <li>We use <strong>no analytics, no advertising trackers, no social plugins, and no third-party embeds</strong>.</li>
           <li>If the operator enables the optional admin panel, your email address and a password hash (argon2id) are stored in a local database on the operator&rsquo;s machine for access control — see &sect;3.</li>
-          <li>We set <strong>no cookies</strong> and read nothing from your device&rsquo;s storage beyond what the app needs to function while the tab is open.</li>
+          <li>We set <strong>no cookies</strong> and read nothing from your device except one local entry this app writes for itself: the model you generated (&sect;3). Delivering that feature is the only reason it exists.</li>
         </ul>
       </section>
 
@@ -40,16 +40,21 @@ export default function PrivacyPolicyPage() {
           <li>
             <strong>Drone video file</strong> — processed locally with your consent to extract keyframes and
             generate the 3D model. It stays in your device&rsquo;s memory (a temporary in-browser URL) and is
-            discarded when you close or reload the tab, or when you press &ldquo;Reset&rdquo;.
+            discarded when you close or reload the tab, or when you press &ldquo;Reset&rdquo;. It is never
+            written to storage; only its file name is kept with the model.
           </li>
           <li>
             <strong>Flight metadata</strong> (GPS reference point, altitude, speed, heading, camera parameters) —
-            used to georeference the reconstruction. Entered by you, kept in memory, never transmitted.
+            used to georeference the reconstruction. Entered by you and never transmitted. Along with the
+            generated model it is kept in this browser&rsquo;s <strong>local storage</strong>, because the
+            stored model cannot be meaningfully reopened without the coordinates it was georeferenced to.
+            Pressing &ldquo;Reset&rdquo; deletes the whole entry, metadata included.
           </li>
           <li>
-            <strong>Consent record</strong> — a single on-device flag that remembers you consented to local
-            processing this session, so the app can enforce consent before processing. It contains no
-            personal data and is not sent anywhere.
+            <strong>Consent record</strong> — a single flag that remembers you consented to local
+            processing, so the app can enforce consent before processing. It contains no personal data, is
+            not sent anywhere, and is deliberately <em>not</em> stored: it lasts for the current page load
+            only, so consent is asked for again on your next visit.
           </li>
         </ul>
         <p>
@@ -72,8 +77,10 @@ export default function PrivacyPolicyPage() {
         </ul>
         <p>
           Creating an account constitutes consent to this processing (DPDP Act &sect;6); you can delete
-          your account by asking the administrator, which removes your email and sessions. The first
-          account created on a fresh installation becomes the administrator.
+          your account by asking the administrator, which removes your email and sessions. Only addresses
+          the operator lists as owners may hold the administrator role, and on a deployed instance the
+          first admin is created with an operator-set bootstrap token rather than by whoever registers
+          first.
         </p>
       </section>
 
@@ -113,7 +120,19 @@ export default function PrivacyPolicyPage() {
       </section>
 
       <section>
-        <h2>6. Your rights under the DPDP Act, 2023</h2>
+        <h2>6. Retention, and how long your model stays</h2>
+        <p>
+          Your video is gone the moment the tab closes or reloads. The generated model and its flight
+          metadata stay in this browser&rsquo;s local storage — across reloads, later visits and browser
+          restarts — until you press <strong>Reset</strong> on the Results page, which deletes the entry
+          outright, or until you clear site data in your browser&rsquo;s settings. Nothing in that entry is
+          ever sent to a server, and because it lives only on your device, Reset <em>is</em> the erasure: it
+          does not leave a copy anywhere for us or anyone else to read.
+        </p>
+      </section>
+
+      <section>
+        <h2>7. Your rights under the DPDP Act, 2023</h2>
         <p>
           Because the Service is designed for users in India, we follow the Digital Personal Data Protection
           Act, 2023 (&ldquo;DPDP Act&rdquo;). Personal data is processed only with your consent, only for the
@@ -122,15 +141,15 @@ export default function PrivacyPolicyPage() {
           device:
         </p>
         <ul>
-          <li><strong>Withdraw consent</strong> — close the tab or press Reset; processing stops immediately.</li>
-          <li><strong>Erasure</strong> — close the tab; in-memory video, metadata, and the generated model are destroyed with it.</li>
+          <li><strong>Withdraw consent</strong> — press Reset on the Results page, or simply close the tab; processing stops immediately and the stored model is deleted.</li>
+          <li><strong>Erasure</strong> — press Reset to delete the stored model and its metadata from this browser, or clear site data in your browser&rsquo;s settings. The in-memory video is destroyed when the tab closes.</li>
           <li><strong>Access &amp; portability</strong> — export the generated model yourself (PLY/OBJ/CSV) from the Results page.</li>
           <li><strong>Grievance redressal</strong> — contact the team via the repository issue tracker; we respond to privacy questions as a project priority.</li>
         </ul>
       </section>
 
       <section>
-        <h2>7. Children</h2>
+        <h2>8. Children</h2>
         <p>
           Consistent with Section 9 of the DPDP Act, the Service is not directed at children under 18 (or
           such higher age as may be prescribed), and we do not process children&rsquo;s personal data because
@@ -139,7 +158,7 @@ export default function PrivacyPolicyPage() {
       </section>
 
       <section>
-        <h2>8. Security</h2>
+        <h2>9. Security</h2>
         <p>
           All reconstruction processing is local to your browser over an encrypted connection (HTTPS)
           when the site is hosted. Because video and flight data never leave your device, a server breach
@@ -149,7 +168,7 @@ export default function PrivacyPolicyPage() {
       </section>
 
       <section>
-        <h2>9. Changes to this policy</h2>
+        <h2>10. Changes to this policy</h2>
         <p>
           If the Service ever adds server-side processing, analytics, or third-party embeds, this policy
           will be updated <em>before</em> those features go live, and consent will be re-requested where

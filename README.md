@@ -60,6 +60,14 @@ An optional session-authenticated admin area lives at `/droneviz3d/admin`:
 
 Reset the backend by deleting `data/` and restarting the server.
 
+## Guest use (no account)
+
+Uploading, processing, the viewer and results need no account and no sign-in — the
+only authenticated area is the admin panel. A finished reconstruction is kept in the
+browser's own `localStorage` so a guest can return to their model days later; the raw
+video never is. **Reset** on the Results page deletes that stored model from the
+browser. See the Privacy Policy §§3 and 6, and the Cookies Policy §3.
+
 ## Pages
 - `/droneviz3d` — Landing page
 - `/droneviz3d/upload` — Video upload + GPS metadata form
