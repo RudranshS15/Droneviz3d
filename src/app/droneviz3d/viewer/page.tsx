@@ -38,6 +38,7 @@ export default function ViewerPage() {
   const [selected, setSelected] = useState<number | null>(null)
   const [autoRotate, setAutoRotate] = useState(false)
   const [pathVisible, setPathVisible] = useState(false)
+  const [labelsDrawn, setLabelsDrawn] = useState<number | null>(null)
 
   // Frame the model once it (or the viewport) changes. The camera keeps the
   // user's viewing angles — only the distance is recomputed to fit.
@@ -132,8 +133,9 @@ export default function ViewerPage() {
       palette: VIEWER_PALETTE,
     })
     markersRef.current = stats.markers
-    // Only re-render when this actually changes, so auto-rotate stays cheap.
+    // Only re-render when these actually change, so auto-rotate stays cheap.
     setPathVisible((previous) => (previous === stats.trajectoryVisible ? previous : stats.trajectoryVisible))
+    setLabelsDrawn((previous) => (previous === stats.labelsDrawn ? previous : stats.labelsDrawn))
   }, [sceneModel, camera, viewport, colorMode, showDetections, showTrajectory, pointSize, selected])
 
   const selectObject = useCallback(
@@ -415,6 +417,12 @@ export default function ViewerPage() {
           {sceneModel.points.length === 0 && (
             <div className="absolute inset-x-0 top-4 mx-auto w-fit px-3 py-1.5 rounded-lg bg-black/80 text-[11px] text-[#e7e5e4]">
               No point cloud in this session — showing the flight path only.
+            </div>
+          )}
+
+          {showDetections && labelsDrawn !== null && labelsDrawn < sceneModel.objects.length && (
+            <div className="absolute bottom-4 left-4 max-w-[18rem] px-3 py-2 rounded-lg bg-black/80 backdrop-blur-sm text-[11px] text-[#e7e5e4]">
+              {labelsDrawn} of {sceneModel.objects.length} labels shown — the rest overlap. Select one to label it.
             </div>
           )}
 

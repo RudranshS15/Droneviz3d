@@ -10,7 +10,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { Ctx2D, SceneInput, VIEWER_PALETTE, projectObjects, renderScene } from '../src/app/droneviz3d/viewer-render'
+import {
+  Ctx2D, LABEL_HEIGHT, MAX_LABELS, SceneInput, VIEWER_PALETTE,
+  declutterLabels, labelBox, labelWidth, projectObjects, renderScene,
+} from '../src/app/droneviz3d/viewer-render'
 import { Viewport, boundingSphere, frameCamera, viewBasis } from '../src/app/droneviz3d/viewer-camera'
 import { confidenceColor } from '../src/app/droneviz3d/confidence'
 import { Point3D } from '../src/app/droneviz3d/reconstruct'
@@ -43,7 +46,12 @@ class RecordingCtx implements Ctx2D {
   arc(): void { this.arcs += 1 }
   stroke(): void { this.strokeStyles.push(this.strokeStyle) }
   fill(): void { this.fills.push({ style: this.fillStyle, x: 0, y: 0, w: 0, h: 0 }) }
-  fillText(text: string): void { this.texts.push(text) }
+  /** every fillText call, with the position it was drawn at */
+  textCalls: { text: string; x: number; y: number }[] = []
+  fillText(text: string, x = 0, y = 0): void {
+    this.texts.push(text)
+    this.textCalls.push({ text, x, y })
+  }
   save(): void { /* no-op */ }
   restore(): void { /* no-op */ }
 
@@ -179,6 +187,96 @@ test('label text reports the object class and its fused score', () => {
   assert.ok(ctx.texts.includes('building 90%'))
   assert.ok(ctx.texts.includes('vehicle 90%'))
   assert.ok(ctx.texts.includes('E') && ctx.texts.includes('N') && ctx.texts.includes('U'), 'gizmo axes are labelled')
+})
+
+/** A dense detection set: many objects whose markers land on top of each other. */
+function crowdedObjects(count: number): TrackedObject[] {
+  return Array.from({ length: count }, (_, i) => {
+    const label = `b${i}`
+    const hit = {
+      label, center: { x: 6 + (i % 4) * 0.25, y: 6 + Math.floor(i / 4) * 0.25, z: 0 },
+      halfExtentX: 4, halfExtentY: 2, score: 0.9, keyframeIndex: 0, viewingAltitude: 120,
+    }
+    return { label, center: hit.center, halfExtentX: 4, halfExtentY: 2, score: 0.9, observations: 1, hits: [hit], best: hit }
+  })
+}
+
+/** The label boxes the renderer actually drew, computed exactly as it did. */
+function drawnLabelBoxes(ctx: RecordingCtx): { text: string; minX: number; minY: number; maxX: number; maxY: number }[] {
+  return ctx.textCalls
+    .filter((call) => /^b\d+ \d+%$/.test(call.text))
+    .map((call) => ({
+      text: call.text,
+      minX: call.x,
+      maxX: call.x + labelWidth(call.text),
+      minY: call.y - LABEL_HEIGHT / 2,
+      maxY: call.y + LABEL_HEIGHT / 2,
+    }))
+}
+
+test('dense detections are decluttered to screen space instead of stacked', () => {
+  const objects = crowdedObjects(30)
+  const { ctx, stats } = render(scene({ objects }))
+
+  assert.equal(drawnLabelBoxes(ctx).length, stats.labelsDrawn, 'the reported count is what was drawn')
+  assert.ok(stats.labelsDrawn > 0, 'the densest cluster still gets a label')
+  assert.ok(stats.labelsDrawn < objects.length, 'colliding labels are dropped, not stacked')
+  assert.ok(stats.labelsDrawn <= MAX_LABELS, 'and never more than the cap')
+
+  const boxes = drawnLabelBoxes(ctx)
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j]
+      const overlaps = a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY
+      assert.ok(!overlaps, `${a.text} overlaps ${b.text}`)
+    }
+  }
+
+  assert.ok(ctx.strokeStyles.length > 0, 'every object is still outlined, labelled or not')
+})
+
+test('the selected object keeps its label when labels collide', () => {
+  const objects = crowdedObjects(30)
+  const { ctx } = render(scene({ objects, selectedIndex: 17 }))
+  const drawn = drawnLabelBoxes(ctx).map((box) => box.text)
+  assert.ok(drawn.includes('b17 90%'), 'the selected object is always labelled')
+  assert.ok(drawn.length < objects.length)
+
+  // With nothing selected the tie-break is scene order, so the selected object is
+  // not labelled by luck: it is labelled because it is selected.
+  const unattended = drawnLabelBoxes(render(scene({ objects })).ctx).map((box) => box.text)
+  assert.ok(!unattended.includes('b17 90%'))
+})
+
+test('declutterLabels drops collisions and prefers the higher score', () => {
+  const placements = [
+    { index: 0, x: 100, y: 100, text: 'weak 50%', score: 0.5, selected: false },
+    { index: 1, x: 104, y: 101, text: 'strong 95%', score: 0.95, selected: false },
+    { index: 2, x: 400, y: 300, text: 'apart 70%', score: 0.7, selected: false },
+  ]
+  assert.deepEqual(declutterLabels(placements).map((p) => p.index), [1, 2])
+})
+
+test('the selected label outranks a higher score, and the cap is enforced', () => {
+  const selected = [
+    { index: 0, x: 100, y: 100, text: 'winner 99%', score: 0.99, selected: false },
+    { index: 1, x: 100, y: 100, text: 'picked 40%', score: 0.4, selected: true },
+  ]
+  assert.deepEqual(declutterLabels(selected).map((p) => p.index), [1])
+
+  const many = Array.from({ length: 40 }, (_, i) => ({
+    index: i, x: (i % 8) * 400, y: Math.floor(i / 8) * 300, text: `o${i} 90%`, score: 0.9, selected: false,
+  }))
+  assert.equal(declutterLabels(many).length, MAX_LABELS)
+  assert.equal(declutterLabels(many, 3).length, 3)
+})
+
+test('labelBox reserves more room for longer text', () => {
+  const short = labelBox({ x: 0, y: 0, text: 'a' })
+  const long = labelBox({ x: 0, y: 0, text: 'a much longer label' })
+  assert.equal(long.minX, short.minX)
+  assert.ok(long.maxX > short.maxX)
+  assert.equal(long.maxY - long.minY, LABEL_HEIGHT)
 })
 
 test('selecting an object highlights it with the selection colour', () => {

@@ -82,11 +82,110 @@ export interface RenderStats {
    * no toggle — the viewer uses this to say so and offer a fit action.
    */
   trajectoryVisible: boolean
+  /**
+   * How many object labels were actually drawn. A dense detection set is deduped
+   * to screen space, so this is usually fewer than the object count — the viewer
+   * says so rather than letting the user think labels are missing.
+   */
+  labelsDrawn: number
 }
 
 const GRID_DIVISIONS = 8
 const MARKER_RADIUS = 6
 const GIZMO_RADIUS = 26
+
+/** Font size for object labels, in pixels. */
+export const LABEL_FONT_SIZE = 11
+/**
+ * Cap on labels drawn at once. A single pass commonly grounds 50+ objects and
+ * they land in a small part of the frame; without a cap the model disappears
+ * under its own annotations.
+ */
+export const MAX_LABELS = 12
+/** Horizontal offset from the marker to the label text. */
+export const LABEL_OFFSET_X = 10
+/** Vertical nudge so the text sits on the marker line rather than through it. */
+export const LABEL_DY = 2
+/** Height reserved for one label, in pixels. */
+export const LABEL_HEIGHT = LABEL_FONT_SIZE + 3
+/**
+ * Advance width per character, as a fraction of the font size. The renderer is
+ * typed against a structural canvas subset with no `measureText`, so boxes are
+ * estimated from the string length — close enough for a declutter pass, and it
+ * keeps the whole thing pure and testable.
+ */
+const LABEL_CHAR_WIDTH = LABEL_FONT_SIZE * 0.62
+
+/** Estimated width of a label at `LABEL_FONT_SIZE`. */
+export function labelWidth(text: string): number {
+  return text.length * LABEL_CHAR_WIDTH
+}
+
+/** An object label competing for screen space. */
+export interface LabelPlacement {
+  /** index of the object in the scene, so the caller can map the result back */
+  index: number
+  x: number
+  y: number
+  text: string
+  /** fused detection score, 0..1 — higher wins when labels collide */
+  score: number
+  /** the selected object is always labelled, whatever else is dropped */
+  selected: boolean
+}
+
+/**
+ * Screen-space box a label occupies, including its offset from the marker. This
+ * is the exact rectangle the label text is drawn into, so decluttering on it
+ * matches what the user sees.
+ */
+export function labelBox(placement: Pick<LabelPlacement, 'x' | 'y' | 'text'>):
+  { minX: number; minY: number; maxX: number; maxY: number } {
+  return {
+    minX: placement.x + LABEL_OFFSET_X,
+    maxX: placement.x + LABEL_OFFSET_X + labelWidth(placement.text),
+    minY: placement.y + LABEL_DY - LABEL_HEIGHT / 2,
+    maxY: placement.y + LABEL_DY + LABEL_HEIGHT / 2,
+  }
+}
+
+function boxesOverlap(
+  a: { minX: number; minY: number; maxX: number; maxY: number },
+  b: { minX: number; minY: number; maxX: number; maxY: number }
+): boolean {
+  return a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY
+}
+
+/**
+ * Greedy screen-space declutter. The selected object is placed first and is
+ * never dropped; the rest are added in descending score order, each only if it
+ * does not overlap a label already placed, up to `maxLabels`.
+ *
+ * Returns the accepted placements in scene order, so the caller can draw
+ * labels in a stable order regardless of score.
+ */
+export function declutterLabels(
+  placements: readonly LabelPlacement[],
+  maxLabels: number = MAX_LABELS
+): LabelPlacement[] {
+  const order = [...placements].sort((a, b) => {
+    if (a.selected !== b.selected) return a.selected ? -1 : 1
+    if (a.score !== b.score) return b.score - a.score
+    return a.index - b.index
+  })
+
+  const boxes: { minX: number; minY: number; maxX: number; maxY: number }[] = []
+  const accepted: LabelPlacement[] = []
+  for (const placement of order) {
+    if (accepted.length >= maxLabels) break
+    const box = labelBox(placement)
+    if (boxes.some((other) => boxesOverlap(box, other))) continue
+    boxes.push(box)
+    accepted.push(placement)
+  }
+
+  return accepted.sort((a, b) => a.index - b.index)
+}
 const GIZMO_ORIGIN = { x: 34, y: 34 }
 
 /** Project the object centres to screen space so a click can select one. */
@@ -208,7 +307,13 @@ function drawTrajectory(
   return { segments, visible }
 }
 
-interface DetectionDraw { object: TrackedObject; x: number; y: number; corners: { x: number; y: number }[] }
+interface DetectionDraw {
+  object: TrackedObject
+  x: number
+  y: number
+  corners: { x: number; y: number }[]
+  text: string
+}
 
 function drawDetections(
   ctx: Ctx2D, scene: SceneInput, basis: ViewBasis, palette: RenderPalette, stats: RenderStats
@@ -229,11 +334,26 @@ function drawDetections(
       if (!corner) return
       corners.push({ x: corner.x, y: corner.y })
     }
-    draws.push({ object, x: center.x, y: center.y, corners })
+    draws.push({ object, x: center.x, y: center.y, corners, text: labelText(object) })
     stats.markers.push({ index: stats.markers.length, x: center.x, y: center.y })
   })
 
-  ctx.font = '11px sans-serif'
+  // Decide which labels are legible in this frame before drawing anything.
+  const labelled = new Set(
+    declutterLabels(
+      draws.map((draw, index) => ({
+        index,
+        x: draw.x,
+        y: draw.y,
+        text: draw.text,
+        score: draw.object.score,
+        selected: selectedIndex === index,
+      }))
+    ).map((placement) => placement.index)
+  )
+  stats.labelsDrawn = labelled.size
+
+  ctx.font = `${LABEL_FONT_SIZE}px sans-serif`
 
   // `draws` and `stats.markers` are built in the same order, so a marker index
   // is exactly the index of the object in `scene.objects`.
@@ -251,11 +371,18 @@ function drawDetections(
     ctx.arc(draw.x, draw.y, isSelected ? MARKER_RADIUS + 2 : MARKER_RADIUS, 0, Math.PI * 2)
     ctx.stroke()
 
+    if (!labelled.has(index)) return
+
     ctx.fillStyle = palette.text
     ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
-    ctx.fillText(`${draw.object.label} ${(draw.object.score * 100).toFixed(0)}%`, draw.x + 10, draw.y + 2)
+    ctx.fillText(draw.text, draw.x + LABEL_OFFSET_X, draw.y + LABEL_DY)
   })
+}
+
+/** `building 90%` — the class and the fused cross-keyframe score. */
+function labelText(object: TrackedObject): string {
+  return `${object.label} ${(object.score * 100).toFixed(0)}%`
 }
 
 function drawGizmo(
@@ -314,7 +441,7 @@ export function renderScene(ctx: Ctx2D, scene: SceneInput): RenderStats {
 
   const stats: RenderStats = {
     drawnPoints: 0, culledPoints: 0, markers: [],
-    drawnTrajectorySegments: 0, trajectoryVisible: false,
+    drawnTrajectorySegments: 0, trajectoryVisible: false, labelsDrawn: 0,
   }
 
   if (scene.showTrajectory) {

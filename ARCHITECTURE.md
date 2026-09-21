@@ -45,7 +45,7 @@ the model is synthesized from detections.
 | Module | Responsibility | Why it is separate |
 | --- | --- | --- |
 | `viewer-camera.ts` | Orbit camera, view basis, projection, gizmo axes, framing | Pure — testable without a DOM |
-| `viewer-render.ts` | Canvas drawing: points, path, markers, gizmo, scale bar | Typed against a structural 2D-context interface so tests use a recording stub |
+| `viewer-render.ts` | Canvas drawing: points, path, markers, gizmo, scale bar, and a screen-space label declutter | Typed against a structural 2D-context interface so tests use a recording stub; the declutter is a pure function |
 | `scene.ts` | Scene composition: bounds incl. near-flight-path, layer model, path-fit | Pure |
 | `confidence.ts` | The single confidence scale (thresholds + colours + labels) | One definition shared by viewer and results |
 | `results-view.ts` | Derived results state: status id, measured vs estimated, empty/partial/restored presentation | Pure |
@@ -180,7 +180,7 @@ runner — no browser, no extra framework.
 | `reconstruct.test.ts` | Determinism, point/trajectory/metric invariants |
 | `exporter.test.ts` | PLY/OBJ/CSV shape and precision; georeferencing |
 | `viewer-camera.test.ts` | Orientation, gizmo basis, framing fits the bounds box |
-| `viewer-render.test.ts` | Draw-call sequence, layer independence, off-frame path hint |
+| `viewer-render.test.ts` | Draw-call sequence, layer independence, off-frame path hint, label declutter (selected label always kept, no overlaps) |
 | `scene.test.ts` | Bounds incl. near path, path-fit view |
 | `confidence.test.ts` | Band contiguity, coverage of [0,1], colour distinctness |
 | `results-view.test.ts` | Every status state and the measured/estimated split |
