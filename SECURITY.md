@@ -7,8 +7,9 @@ Audit date: September 8, 2026 · Result: **npm audit: 0 vulnerabilities**
 DroneViz3D is a Next.js app: 3D reconstruction runs **entirely in the browser**
 (Zustand state + WebGL canvas; the raw video never leaves the device). Since
 September 2026 it also ships an **optional admin backend** (SQLite + session auth,
-see §9) that the operator enables simply by visiting `/droneviz3d/admin` and
-creating the first account. The reconstruction pipeline itself still has no
+see §9) that the operator enables by creating the first account at
+`/droneviz3d/admin`, which requires the bootstrap token to claim an admin role
+on a deployed instance (§9.1). The reconstruction pipeline itself still has no
 server-side involvement; the admin backend only stores login data.
 
 The only other network-facing component is `grounding-worker.py` (the optional
@@ -19,17 +20,17 @@ LocateAnything-3B inference service), which has been hardened — see §8.
 | # | Requested control | Status | Where / evidence |
 |---|---|---|---|
 | 1 | API keys hidden | ✅ | Zero secrets in code; `.env` files gitignored (`*.env`, `*.pem`, `*.key`, …); `.env.example` is an empty template. No `NEXT_PUBLIC_*` secrets exist. |
-| 2 | Env variables checked | ✅ | No code reads `process.env` yet. `.env.example` rewritten to Next.js conventions (removed misleading `VITE_*` names) with a public-vs-server explanation. |
+| 2 | Env variables checked | ✅ | Four variables are read, all inspected: `WORKER_URL` + `WORKER_TOKEN` (server-only, injected by the grounding proxy so the browser never sees the token), `NEXT_PUBLIC_GROUNDING_MODE` (public by design — a non-secret mode flag), and `ADMIN_BOOTSTRAP_TOKEN` (server-only, gates first-admin setup — §9.1). `NODE_ENV` is set by Next itself. `.env.example` documents each with a public-vs-server explanation. |
 | 3 | Admin routes protected | ✅ | `/droneviz3d/admin/*` is guarded server-side (session + role check in each page); admin APIs require an admin session. Guards run in Node server components — the Edge middleware runtime cannot open the local SQLite DB, so `middleware.ts` is intentionally absent. Next is on 15.5.x (middleware-bypass CVE GHSA-f82v-jwr5-qhjx / CVE-2025-29927 patched). |
 | 4 | Proper authentication | ✅ | Session-based: random 256-bit tokens in SQLite, delivered as httpOnly + SameSite=Lax + Secure-on-HTTPS cookies, 7-day expiry, **double-submit CSRF token per session** (server-side value + `X-CSRF-Token` header). Passwords argon2id (OWASP params). Rate-limited login/register + **account-level lockout** (5 bad passwords on one email → 15 min lock, independent of IP). Password change requires forced re-auth and **rotates the session cookie** + signs out other sessions. |
-| 5 | User access control | ✅ | Roles: `user` / `admin` (first registered account becomes admin). Admin-only: user list, **role change (promote/demote)**, delete user (self-delete + last-admin guards), system status. Role changes **revoke the user's sessions** so a token minted under the old role can't be reused; new sign-in gets a rotated cookie. |
+| 5 | User access control | ✅ | Roles: `user` / `admin`. Claiming the first admin requires `ADMIN_BOOTSTRAP_TOKEN` on any deployment, so a public instance cannot be seized before the owner registers (§9.1). Admin-only: user list, **role change (promote/demote)**, delete user (self-delete + last-admin guards), system status. Role changes **revoke the user's sessions** so a token minted under the old role can't be reused; new sign-in gets a rotated cookie. |
 | 6 | Form sanitization | ✅ | All inputs validated client-side (`validator.ts`: ranges, types, dates) before use; React escapes all rendered values; labels sent to the worker are length/character-capped and deduplicated. CSV export contains only numeric values (no formula-injection vector). |
 | 7 | XSS protection | ✅ | Zero `dangerouslySetInnerHTML`, `innerHTML`, `eval`, or `document.write` in `src/` (verified by search). Worker output is parsed with regex into numbers and rendered as text/canvas only. Production CSP active (see §7). |
 | 8 | Rate limiting | ✅ | Login/register/password-change: 5–10 attempts per 15 min per IP **plus** per-account failure locks. Admin API: 120 calls/min/IP. Grounding proxy: 60 POSTs/10 min/IP. Worker: 30 req/min/IP. All site limiters are **backed by the shared SQLite store** (`rate_events` table in the same `data/` DB), so they hold across multiple server processes/instances on one volume — not just one process's memory. |
 | 9 | API endpoints secured | ✅ | Worker: bearer-token auth (required unless loopback + explicitly disabled), upload size/dimension/format caps, label caps, `Cache-Control: no-store`, `docs` endpoints disabled. |
 | 10 | CORS checked | ✅ | Worker CORS locked to `http://localhost:3000` + `http://127.0.0.1:3000`, no credentials. Site itself is same-origin; no third-party origins anywhere. |
 | 11 | Security headers | ✅ | `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, CSP + HSTS (production), `X-Powered-By` removed. |
-| 12 | Debug mode off | ✅ | No debug flags, no console logging in `src/`; production build is stripped. React Strict Mode enabled (dev-only behavior, catches bugs early). |
+| 12 | Debug mode off | ✅ | No debug flags and no `console.log` in `src/`; production build is stripped. Three deliberate `console.warn` calls exist, all operator diagnostics carrying no secrets: oversized-model persistence, worker-grounding fallback, and a refused administrator setup. React Strict Mode enabled (dev-only behavior, catches bugs early). |
 | 13 | Dependencies updated | ✅ | Next 14.2.35 → **15.5.25**, React 18 → **19.2**, Zustand 4 → **5**, PostCSS 8.4.31 → **8.5.28** (incl. the copy bundled inside Next, forced via `overrides`). |
 | 14 | Unused packages removed | ✅ | All deps are used (next/react/react-dom/zustand + Tailwind toolchain). None removed; none added beyond the upgrade. |
 | 15 | Exposed files checked | ✅ | `git ls-files` shows no secrets, keys, or credentials. `.gitignore` now also covers all `.env.*`, certs/keys, logs, coverage, and `screenshots/`. |
@@ -102,9 +103,8 @@ Implemented September 2026:
 7. **Database**: `node:sqlite` (built into Node — nothing to compile), file in
    `data/` (gitignored), WAL mode, FK enforcement, prepared statements only.
 8. **Admin routes**: `/droneviz3d/admin/*` pages and `/api/admin/*` routes all
-   verify the session server-side and require role `admin`. First registered
-   account becomes admin. Delete-user guards: cannot remove yourself or the
-   last admin.
+   verify the session server-side and require role `admin`. Delete-user guards:
+   cannot remove yourself or the last admin.
 9. **Rate limiting (shared)**: limiters read/write a `rate_events` table in
    the shared `data/droneviz3d.db` instead of process memory, so limits hold
    across multiple instances on one host/volume (sliding window, per-key
@@ -113,6 +113,37 @@ Implemented September 2026:
    `countRateEvents` / … in `src/lib/db.ts`) — that swap is the one remaining
    scale step. Re-run `npm audit` on every dependency change; keep `next` on
    the latest patched 15.x/16.x line.
+
+### 9.1 First-administrator bootstrap
+
+Auto-granting the admin role to the first account that registers is harmless on
+a developer's machine and unsafe on a deployed instance: the winner is whoever's
+request arrives first, and against a public URL that is frequently a scanner
+rather than the person who deployed the app. Registration therefore never
+escalates itself:
+
+- An installation that **already has an administrator** only ever creates plain
+  `user` accounts through registration — knowing the token grants nothing.
+- On an installation with **no administrator**, the admin role requires
+  `ADMIN_BOOTSTRAP_TOKEN` (`openssl rand -hex 32`) to be sent with the
+  registration and to match. The comparison is constant-time and runs over
+  SHA-256 digests, so neither value's length leaks through timing. Once an admin
+  exists the token is never consulted again, so the variable can be deleted.
+- With no administrator and **no configured token**, registration is *refused*
+  (403) instead of quietly creating a plain user. That distinction is the whole
+  point: a downgraded user would occupy the first-account slot and lock the
+  legitimate owner out of the token path permanently.
+- The token-free path is additionally limited to requests that look local: the
+  client address (first `X-Forwarded-For` entry, else `X-Real-IP`) **and** the
+  `Host` must both be loopback, and the path is disabled entirely in production —
+  a spoofed `X-Forwarded-For: 127.0.0.1` is still refused there. Note that
+  Next.js sets `x-forwarded-*` on every request itself, so this check reads the
+  header *values* rather than their presence. It exists only so `npm run dev`
+  on your own machine keeps its first-run flow.
+
+A refused attempt writes nothing: no user row, no session, no rate-limit slot
+consumed beyond the normal per-IP budget. The full decision table is unit-tested
+in `tests/bootstrap.test.ts`.
 
 ## 10. Verification commands
 

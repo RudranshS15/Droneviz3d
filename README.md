@@ -26,8 +26,12 @@ headers, hardened inference worker, and the admin backend controls.
 
 An optional session-authenticated admin area lives at `/droneviz3d/admin`:
 
-- **First-run**: visit `/droneviz3d/admin` and create an account — the first
-  account on a fresh installation becomes the administrator.
+- **First-run**: set `ADMIN_BOOTSTRAP_TOKEN` (`openssl rand -hex 32`) on the
+  server, then open `/droneviz3d/admin`, choose **Create account**, and paste the
+  token — the first account becomes the administrator. A deployed instance
+  **refuses** registration without that variable instead of letting whoever
+  arrives first take the admin role; delete it once the admin exists. On
+  `npm run dev` the token is optional, so local first-run is unchanged.
 - **Auth**: argon2id password hashing; httpOnly SameSite cookies (7-day sessions);
   per-session CSRF tokens (required on every mutating call, refreshed via
   `GET /api/auth/me`); per-IP rate limits **plus per-account lockout** (5 bad

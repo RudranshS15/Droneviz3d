@@ -3,7 +3,10 @@ import {
   hashPassword, validateCredentials, issueSession, isSameOrigin,
 } from '@/lib/auth'
 import { registerLimiter, clientIp } from '@/lib/rate-limit'
-import { createUser, findUserByEmail, userCount } from '@/lib/db'
+import { createUser, findUserByEmail, countAdmins } from '@/lib/db'
+import {
+  decideBootstrapRole, isLocalRequest, readConfiguredToken,
+} from '@/lib/bootstrap'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -21,7 +24,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     )
   }
 
-  let body: { email?: unknown; password?: unknown }
+  let body: { email?: unknown; password?: unknown; bootstrapToken?: unknown }
   try {
     body = await req.json()
   } catch {
@@ -29,6 +32,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
   const email = String(body.email ?? '').trim().toLowerCase()
   const password = typeof body.password === 'string' ? body.password : ''
+  const bootstrapToken = typeof body.bootstrapToken === 'string' ? body.bootstrapToken.trim() : ''
 
   const invalid = validateCredentials(email, password)
   if (invalid) {
@@ -39,8 +43,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'An account with this email already exists' }, { status: 409, headers: { 'Cache-Control': 'no-store' } })
   }
 
-  // First account on a fresh installation becomes the administrator.
-  const role = userCount() === 0 ? 'admin' : 'user'
+  // Who may become the administrator is decided before anything is written, so
+  // a refused claim leaves no trace: no account, no session, no consumed slot.
+  // See bootstrap.ts for the full rule.
+  const decision = decideBootstrapRole(
+    {
+      hasAdmin: countAdmins() > 0,
+      configuredToken: readConfiguredToken(process.env),
+      isProduction: process.env.NODE_ENV === 'production',
+      isLocalRequest: isLocalRequest(req),
+    },
+    bootstrapToken
+  )
+
+  if (decision.action === 'refuse') {
+    // Worth a server-side line: an operator hitting this is usually one env var
+    // away from a working installation.
+    console.warn(`[auth] refused registration for ${email}: administrator setup required`)
+    return NextResponse.json(
+      { error: decision.error },
+      { status: decision.status, headers: { 'Cache-Control': 'no-store' } }
+    )
+  }
+
+  const role = decision.action === 'grant-admin' ? 'admin' : 'user'
   const user = createUser(email, await hashPassword(password), role)
   await issueSession(user.id)
 
