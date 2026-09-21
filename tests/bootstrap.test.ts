@@ -111,7 +111,7 @@ function req(headers: Record<string, string>): Request {
   return new Request('http://example.test/api/auth/register', { method: 'POST', headers })
 }
 
-test('isLocalRequest accepts only unproxied loopback requests', () => {
+test('isLocalRequest accepts loopback hosts, and nothing else', () => {
   assert.equal(isLocalRequest(req({ host: 'localhost:3000' })), true)
   assert.equal(isLocalRequest(req({ host: '127.0.0.1:3000' })), true)
   assert.equal(isLocalRequest(req({ host: '[::1]:3000' })), true)
