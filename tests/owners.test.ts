@@ -9,7 +9,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { OWNER_EMAILS_ENV, isOwnerEmail, readOwnerEmails } from '../src/lib/owners'
+import {
+  OWNER_EMAILS_ENV, canChangeRoles, canRemoveUser, isOwnerEmail, readOwnerEmails,
+} from '../src/lib/owners'
+import type { Actor } from '../src/lib/owners'
 
 const OWNER = 'owner@example.com'
 
@@ -63,4 +66,57 @@ test('a second owner address is accepted alongside the first', () => {
   assert.equal(isOwnerEmail(OWNER, owners), true)
   assert.equal(isOwnerEmail('partner@example.com', owners), true)
   assert.equal(isOwnerEmail('someone@example.com', owners), false)
+})
+
+// ---- who may do what --------------------------------------------------------
+
+const OWNERS = [OWNER]
+const owner: Actor = { email: OWNER, role: 'admin' }
+const promoted: Actor = { email: 'sam@example.com', role: 'admin' }
+const plain: Actor = { email: 'sam@example.com', role: 'user' }
+const another: Actor = { email: 'other@example.com', role: 'user' }
+const anotherAdmin: Actor = { email: 'other@example.com', role: 'admin' }
+
+test('without an allowlist every admin keeps the older powers', () => {
+  assert.equal(canChangeRoles(promoted, []), true)
+  assert.equal(canChangeRoles({ email: 'someone@example.com', role: 'user' }, []), false, 'not an admin')
+  assert.equal(canRemoveUser({ email: 'someone@example.com', role: 'user' }, plain, []), false, 'not an admin')
+  // The route still refuses self-deletion and the last admin; this predicate is
+  // only the owner-allowlist half of the decision.
+  assert.equal(canRemoveUser(promoted, plain, []), true)
+  assert.equal(canRemoveUser(promoted, anotherAdmin, []), true)
+})
+
+test('with an allowlist only the owner may change a role', () => {
+  assert.equal(canChangeRoles(owner, OWNERS), true)
+  // A promoted admin is still an admin — just not one who can hand out the role.
+  assert.equal(canChangeRoles(promoted, OWNERS), false)
+  assert.equal(canChangeRoles(plain, OWNERS), false)
+})
+
+test('with an allowlist a promoted admin may remove regular users only', () => {
+  assert.equal(canRemoveUser(promoted, plain, OWNERS), true, 'the day-to-day moderation case')
+  assert.equal(canRemoveUser(promoted, another, OWNERS), true)
+
+  // But never a peer admin — so promoted admins cannot purge each other…
+  assert.equal(canRemoveUser(promoted, anotherAdmin, OWNERS), false)
+  assert.equal(canRemoveUser(promoted, owner, OWNERS), false)
+  assert.equal(canRemoveUser(anotherAdmin, promoted, OWNERS), false, 'symmetric: neither can remove the other')
+})
+
+test('with an allowlist nobody removes an owner, including the owner', () => {
+  assert.equal(canRemoveUser(owner, owner, OWNERS), false)
+  assert.equal(canRemoveUser(promoted, owner, OWNERS), false)
+  assert.equal(canRemoveUser(plain, owner, OWNERS), false)
+})
+
+test('the owner may remove anybody, admins included', () => {
+  assert.equal(canRemoveUser(owner, plain, OWNERS), true)
+  assert.equal(canRemoveUser(owner, anotherAdmin, OWNERS), true)
+  assert.equal(canRemoveUser(owner, promoted, OWNERS), true)
+})
+
+test('a plain user can remove nobody', () => {
+  assert.equal(canRemoveUser(plain, another, OWNERS), false)
+  assert.equal(canRemoveUser(plain, owner, OWNERS), false)
 })

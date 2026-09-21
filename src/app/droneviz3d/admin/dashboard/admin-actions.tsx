@@ -184,14 +184,14 @@ export function UsersTable({
   users,
   currentUserId,
   ownerIds,
-  canManageUsers,
+  canChangeRoles,
 }: {
   users: AdminUser[]
   currentUserId: number
   /** ids of accounts named in OWNER_EMAILS — immutable and never removable */
   ownerIds: number[]
-  /** false when only the owner may change roles or remove users */
-  canManageUsers: boolean
+  /** false when only the owner may change anybody's role */
+  canChangeRoles: boolean
 }) {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
@@ -227,9 +227,12 @@ export function UsersTable({
 
   const isSelf = (u: AdminUser) => u.id === currentUserId
   const isOwnerRow = (u: AdminUser) => ownerIds.includes(u.id)
-  // Role buttons follow the same permission as removal: when an allowlist is in
-  // force only the owner sees them, which is what makes every promotion the
-  // owner's own decision. Owner rows never get buttons — they are immutable.
+  // Mirrors the server's rules (lib/owners.ts) so the buttons shown are exactly
+  // the actions that would succeed — an owner row is never actionable, and
+  // without role rights a promoted admin can still remove regular users only.
+  const mayChangeRole = (u: AdminUser) => canChangeRoles && !isSelf(u) && !isOwnerRow(u)
+  const mayRemove = (u: AdminUser) =>
+    !isSelf(u) && !isOwnerRow(u) && (canChangeRoles || u.role === 'user')
 
   return (
     <div>
@@ -270,11 +273,11 @@ export function UsersTable({
               <td className="py-3 text-right whitespace-nowrap">
                 {isOwnerRow(u) ? (
                   <span className="text-[11px] text-[#a8a29e]">protected</span>
-                ) : !canManageUsers ? (
+                ) : !mayChangeRole(u) && !mayRemove(u) ? (
                   <span className="text-[11px] text-[#a8a29e]">owner&#8209;only</span>
                 ) : (
                   <>
-                    {canManageUsers && !isSelf(u) && (
+                    {mayChangeRole(u) && (
                       <button
                         type="button"
                         onClick={() => act(u, u.role === 'admin' ? 'demote' : 'promote')}
@@ -285,15 +288,17 @@ export function UsersTable({
                         {busyId === u.id ? 'Working…' : u.role === 'admin' ? 'Demote' : 'Promote'}
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => act(u, 'remove')}
-                      disabled={isSelf(u) || busyId === u.id}
-                      aria-label={`Remove user ${u.email} and sign out their sessions`}
-                      className="text-[12px] text-[#a8a29e] hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
-                    >
-                      Remove
-                    </button>
+                    {mayRemove(u) && (
+                      <button
+                        type="button"
+                        onClick={() => act(u, 'remove')}
+                        disabled={busyId === u.id}
+                        aria-label={`Remove user ${u.email} and sign out their sessions`}
+                        className="text-[12px] text-[#a8a29e] hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </>
                 )}
               </td>

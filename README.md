@@ -35,12 +35,12 @@ An optional session-authenticated admin area lives at `/droneviz3d/admin`:
 - **Owner account** (`OWNER_EMAILS`, optional): a comma-separated allowlist of
   the addresses that own the installation. Only those are admin by default — any
   other registration is a plain user even with the correct token — and only an
-  owner can promote anyone, demote or remove a user, or sign their sessions out.
-  You keep the ability to promote someone when you want to; what nobody else can
-  do is grant themselves admin. An owner account can never be demoted or deleted
-  by anyone, including itself, so you cannot be locked out of your own
-  installation. Passwords are the only credential a user holds, so removing a
-  user revokes their sessions immediately.
+  owner can change anybody's role, so the only way someone becomes an admin is
+  your deliberate promotion. Somebody you do promote can remove regular users
+  (moderation) but never another admin and never you. An owner account can never
+  be demoted or deleted by anyone, including itself, so you cannot be locked out
+  of your own installation. Passwords are the only credential a user holds, so
+  removing a user revokes their sessions immediately.
 - **Auth**: argon2id password hashing; httpOnly SameSite cookies (7-day sessions);
   per-session CSRF tokens (required on every mutating call, refreshed via
   `GET /api/auth/me`); per-IP rate limits **plus per-account lockout** (5 bad

@@ -23,7 +23,7 @@ LocateAnything-3B inference service), which has been hardened — see §8.
 | 2 | Env variables checked | ✅ | Four variables are read, all inspected: `WORKER_URL` + `WORKER_TOKEN` (server-only, injected by the grounding proxy so the browser never sees the token), `NEXT_PUBLIC_GROUNDING_MODE` (public by design — a non-secret mode flag), and `ADMIN_BOOTSTRAP_TOKEN` (server-only, gates first-admin setup — §9.1). `NODE_ENV` is set by Next itself. `.env.example` documents each with a public-vs-server explanation. |
 | 3 | Admin routes protected | ✅ | `/droneviz3d/admin/*` is guarded server-side (session + role check in each page); admin APIs require an admin session. Guards run in Node server components — the Edge middleware runtime cannot open the local SQLite DB, so `middleware.ts` is intentionally absent. Next is on 15.5.x (middleware-bypass CVE GHSA-f82v-jwr5-qhjx / CVE-2025-29927 patched). |
 | 4 | Proper authentication | ✅ | Session-based: random 256-bit tokens in SQLite, delivered as httpOnly + SameSite=Lax + Secure-on-HTTPS cookies, 7-day expiry, **double-submit CSRF token per session** (server-side value + `X-CSRF-Token` header). Passwords argon2id (OWASP params). Rate-limited login/register + **account-level lockout** (5 bad passwords on one email → 15 min lock, independent of IP). Password change requires forced re-auth and **rotates the session cookie** + signs out other sessions. |
-| 5 | User access control | ✅ | Roles: `user` / `admin`, with an **owner allowlist** (`OWNER_EMAILS`, §9.2): only listed addresses are admin by default and only an owner may grant the role to anyone else or remove a user, so every promotion is the owner's own decision. An owner account can never be demoted or deleted by anyone. Claiming admin additionally requires `ADMIN_BOOTSTRAP_TOKEN` on any deployment, so a public instance cannot be seized before the owner registers (§9.1). Admin-only: user list, **role change (promote/demote)**, delete user (self-delete + last-admin guards), system status. Role changes **revoke the user's sessions** so a token minted under the old role can't be reused; new sign-in gets a rotated cookie. |
+| 5 | User access control | ✅ | Roles: `user` / `admin`, with an **owner allowlist** (`OWNER_EMAILS`, §9.2): only listed addresses are admin by default, only an owner may grant the role to anyone else, an owner account can never be demoted or deleted by anyone, and a promoted admin may remove regular users but never a peer admin or the owner. Claiming admin additionally requires `ADMIN_BOOTSTRAP_TOKEN` on any deployment, so a public instance cannot be seized before the owner registers (§9.1). Admin-only: user list, **role change (promote/demote)**, delete user (self-delete + last-admin guards), system status. Role changes **revoke the user's sessions** so a token minted under the old role can't be reused; new sign-in gets a rotated cookie. |
 | 6 | Form sanitization | ✅ | All inputs validated client-side (`validator.ts`: ranges, types, dates) before use; React escapes all rendered values; labels sent to the worker are length/character-capped and deduplicated. CSV export contains only numeric values (no formula-injection vector). |
 | 7 | XSS protection | ✅ | Zero `dangerouslySetInnerHTML`, `innerHTML`, `eval`, or `document.write` in `src/` (verified by search). Worker output is parsed with regex into numbers and rendered as text/canvas only. Production CSP active (see §7). |
 | 8 | Rate limiting | ✅ | Login/register/password-change: 5–10 attempts per 15 min per IP **plus** per-account failure locks. Admin API: 120 calls/min/IP. Grounding proxy: 60 POSTs/10 min/IP. Worker: 30 req/min/IP. All site limiters are **backed by the shared SQLite store** (`rate_events` table in the same `data/` DB), so they hold across multiple server processes/instances on one volume — not just one process's memory. |
@@ -156,11 +156,16 @@ take that away from me":
 - **Only listed addresses are admin by default.** Any other registration is a
   plain `user`, *even when the correct bootstrap token is presented* — the token
   proves "I am setting this up", not "I am the owner".
-- **Only an owner may grant admin, or remove a user.** This is what "others can
-  be admin only with my confirmation" reduces to: the owner is the only actor who
-  can pass the check, so the sole source of a new admin is the owner deliberately
-  promoting one. A promoted admin gets the dashboard but cannot change roles,
-  remove anyone, or touch the owner.
+- **Only an owner may change a role.** This is what "others can be admin only
+  with my confirmation" reduces to: the owner is the only actor who can pass the
+  check, so the sole source of a new admin is the owner deliberately promoting
+  one.
+- **A promoted admin may remove regular users, and nothing more.** Day-to-day
+  moderation works without handing over the installation: they can delete plain
+  `user` accounts but never a peer admin, and never the owner. Role changes are
+  refused for them regardless of who the target is. This is enforced by
+  `canRemoveUser`, which also refuses any non-admin actor outright, so a route
+  that forgets its own role check cannot fall through to "allow".
 - **An owner account is immutable.** It cannot be demoted, deleted, or have its
   sessions revoked — not by another admin, not by a second owner, and not by
   itself. This is what makes lockout structurally impossible rather than merely

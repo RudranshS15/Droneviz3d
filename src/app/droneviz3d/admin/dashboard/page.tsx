@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getSessionUser } from '@/lib/auth'
 import { listUsers, sessionCount, userCount } from '@/lib/db'
-import { isOwnerEmail, readOwnerEmails } from '@/lib/owners'
+import { canChangeRoles, isOwnerEmail, readOwnerEmails } from '@/lib/owners'
 import { LogoutButton, UsersTable, ChangePasswordButton } from './admin-actions'
 
 export const dynamic = 'force-dynamic'
@@ -38,7 +38,7 @@ export default async function AdminDashboardPage() {
   const ownersConfigured = ownerEmails.length > 0
   const actorIsOwner = isOwnerEmail(user.email, ownerEmails)
   const ownerIds = users.filter((u) => isOwnerEmail(u.email, ownerEmails)).map((u) => u.id)
-  const canManageUsers = ownersConfigured ? actorIsOwner : true
+  const canChangeRolesHere = canChangeRoles(user, ownerEmails)
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] flex flex-col">
@@ -92,14 +92,14 @@ export default async function AdminDashboardPage() {
             <p className="-mt-2 mb-4 text-[11px] text-[#a8a29e] leading-relaxed max-w-2xl">
               {actorIsOwner
                 ? 'Your address is the only one that can hold admin by default. Promote somebody only if you want them to have the dashboard — you can demote or remove them again at any time. Nobody can demote or remove you.'
-                : 'Only the owner account can change roles or remove users. You can still use everything else on this dashboard.'}
+                : 'You can remove regular users. Only the owner account can change roles, and only the owner can remove another administrator.'}
             </p>
           )}
           <UsersTable
             users={users}
             currentUserId={user.id}
             ownerIds={ownerIds}
-            canManageUsers={canManageUsers}
+            canChangeRoles={canChangeRolesHere}
           />
         </div>
       </div>
