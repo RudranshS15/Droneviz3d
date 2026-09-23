@@ -13,7 +13,7 @@
 
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export type UserRole = 'user' | 'admin'
 
@@ -31,15 +31,25 @@ export interface SessionUser {
   role: UserRole
 }
 
-const DATA_DIR = join(process.cwd(), 'data')
-const DB_PATH = join(DATA_DIR, 'droneviz3d.db')
+/**
+ * Database location. `DRONEVIZ_DB_PATH` exists so a test can point at its own
+ * temporary file instead of creating the developer's real database as a side
+ * effect of running the suite. Resolved lazily, at connection time, rather than
+ * at import — the module may be imported before a test sets the variable.
+ */
+function dbPath(): string {
+  const fromEnv = process.env.DRONEVIZ_DB_PATH
+  if (fromEnv && fromEnv.trim() !== '') return fromEnv
+  return join(process.cwd(), 'data', 'droneviz3d.db')
+}
 
 let _db: DatabaseSync | null = null
 
 function db(): DatabaseSync {
   if (_db) return _db
-  mkdirSync(DATA_DIR, { recursive: true })
-  const d = new DatabaseSync(DB_PATH)
+  const path = dbPath()
+  mkdirSync(dirname(path), { recursive: true })
+  const d = new DatabaseSync(path)
   d.exec('PRAGMA journal_mode = WAL')
   d.exec('PRAGMA foreign_keys = ON')
   d.exec(`
@@ -192,6 +202,73 @@ export function deleteUserSessionsExcept(userId: number, exceptId: string): void
   db().prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').run(userId, exceptId)
 }
 
+// ---- transactions ---------------------------------------------------------
+
+/**
+ * Depth of an open transaction on this connection. `node:sqlite` gives one
+ * synchronous connection per process, so nested calls must join the outer
+ * transaction rather than try to open a second one (SQLite rejects that).
+ */
+let txDepth = 0
+
+/**
+ * Run `fn` inside a `BEGIN IMMEDIATE` transaction: the write lock is taken up
+ * front, so a check-then-write inside `fn` cannot interleave with another
+ * process. Required for anything that decides on a value it is about to write
+ * — a plain check followed by a separate insert is exactly the race the review
+ * flagged for both the rate limiter and registration.
+ *
+ * The function is synchronous on purpose: awaiting inside a transaction would
+ * hold SQLite's single write lock across I/O, which is worse than the race.
+ */
+export function withImmediateTransaction<T>(fn: () => T): T {
+  if (txDepth > 0) return fn()
+  const d = db()
+  d.exec('BEGIN IMMEDIATE')
+  txDepth++
+  try {
+    const result = fn()
+    d.exec('COMMIT')
+    return result
+  } catch (err) {
+    try {
+      d.exec('ROLLBACK')
+    } catch {
+      /* already rolled back by SQLite */
+    }
+    throw err
+  } finally {
+    txDepth--
+  }
+}
+
+/** Thrown when an insert violates the unique-email constraint. */
+export class DuplicateEmailError extends Error {
+  constructor(email: string) {
+    super(`An account with this email already exists (${email})`)
+    this.name = 'DuplicateEmailError'
+  }
+}
+
+/**
+ * Atomically decide a new user's role and create the account.
+ *
+ * `decide` runs *inside* the transaction with a fresh admin count, so the
+ * "first account becomes admin" rule cannot be invalidated by a request that
+ * started before it. The password is already hashed by the caller — hashing
+ * inside would hold the write lock for the length of an argon2 computation.
+ */
+export function createUserAtomic(
+  email: string,
+  passwordHash: string,
+  decide: (hasAdmin: boolean) => UserRole
+): UserRow {
+  return withImmediateTransaction(() => {
+    if (findUserByEmail(email)) throw new DuplicateEmailError(email)
+    return createUser(email, passwordHash, decide(countAdmins() > 0))
+  })
+}
+
 // ---- shared rate-limit store ----------------------------------------------
 // Used by rate-limit.ts. Rows carry (key, unix-ms) hits; a key is usually
 // `scope:<identity>` (e.g. an IP or a normalized email). Because the table
@@ -200,6 +277,30 @@ export function deleteUserSessionsExcept(userId: number, exceptId: string): void
 
 export function addRateEvent(key: string, ts: number): void {
   db().prepare('INSERT INTO rate_events (key, ts) VALUES (?, ?)').run(key, ts)
+}
+
+/**
+ * Atomic check-and-consume for a sliding window: prune, count, and (only if
+ * under the limit) insert, all inside one immediate transaction.
+ *
+ * The old flow counted and inserted as two separate statements, so two processes
+ * could each observe `limit - 1` and both admit — the limit was advisory across
+ * instances. Returns the oldest surviving hit when refusing, so the caller can
+ * compute an accurate Retry-After.
+ */
+export function consumeRateEvent(
+  key: string, now: number, windowMs: number, limit: number
+): { allowed: boolean; oldest: number | null } {
+  return withImmediateTransaction(() => {
+    const d = db()
+    const cutoff = now - windowMs
+    d.prepare('DELETE FROM rate_events WHERE key = ? AND ts < ?').run(key, cutoff)
+    const row = d.prepare('SELECT COUNT(*) AS n, MIN(ts) AS oldest FROM rate_events WHERE key = ? AND ts > ?')
+      .get(key, cutoff) as { n: number; oldest: number | null }
+    if (row.n >= limit) return { allowed: false, oldest: row.oldest ?? now }
+    d.prepare('INSERT INTO rate_events (key, ts) VALUES (?, ?)').run(key, now)
+    return { allowed: true, oldest: null }
+  })
 }
 
 /** Number of hits for a key newer than `sinceMs`. */

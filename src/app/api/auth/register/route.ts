@@ -3,7 +3,7 @@ import {
   hashPassword, validateCredentials, issueSession, isSameOrigin,
 } from '@/lib/auth'
 import { registerLimiter, clientIp } from '@/lib/rate-limit'
-import { createUser, findUserByEmail, countAdmins } from '@/lib/db'
+import { DuplicateEmailError, createUserAtomic } from '@/lib/db'
 import {
   decideBootstrapRole, isLocalRequest, readConfiguredToken,
 } from '@/lib/bootstrap'
@@ -40,42 +40,61 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: invalid }, { status: 422, headers: { 'Cache-Control': 'no-store' } })
   }
 
-  if (findUserByEmail(email)) {
-    return NextResponse.json({ error: 'An account with this email already exists' }, { status: 409, headers: { 'Cache-Control': 'no-store' } })
-  }
+  // Hash *before* taking the write lock. argon2id takes tens of milliseconds,
+  // and holding SQLite's single write lock across it would serialize every
+  // registration in the process. Previously the existence check ran, then we
+  // awaited the hash, then we inserted — so two concurrent requests for the same
+  // or different emails could both pass checks that the hash delay invalidated.
+  const passwordHash = await hashPassword(password)
 
-  // Who may become the administrator is decided before anything is written, so
-  // a refused claim leaves no trace: no account, no session, no consumed slot.
-  // See bootstrap.ts and owners.ts for the full rule.
+  // Who may become the administrator is decided inside the transaction, with a
+  // fresh admin count, so the "first account becomes admin" rule cannot be
+  // claimed by two requests at once. See bootstrap.ts and owners.ts for the rule.
   const ownerEmails = readOwnerEmails(process.env)
-  const decision = decideBootstrapRole(
-    {
-      hasAdmin: countAdmins() > 0,
-      ownersConfigured: ownerEmails.length > 0,
-      isOwner: isOwnerEmail(email, ownerEmails),
-      configuredToken: readConfiguredToken(process.env),
-      isProduction: process.env.NODE_ENV === 'production',
-      isLocalRequest: isLocalRequest(req),
-    },
-    bootstrapToken
-  )
-
-  if (decision.action === 'refuse') {
-    // Worth a server-side line: an operator hitting this is usually one env var
-    // away from a working installation.
-    console.warn(`[auth] refused registration for ${email}: administrator setup required`)
+  try {
+    const user = createUserAtomic(email, passwordHash, (hasAdmin) => {
+      const decision = decideBootstrapRole(
+        {
+          hasAdmin,
+          ownersConfigured: ownerEmails.length > 0,
+          isOwner: isOwnerEmail(email, ownerEmails),
+          configuredToken: readConfiguredToken(process.env),
+          isProduction: process.env.NODE_ENV === 'production',
+          isLocalRequest: isLocalRequest(req),
+        },
+        bootstrapToken
+      )
+      if (decision.action === 'refuse') {
+        // Worth a server-side line: an operator hitting this is usually one env
+        // var away from a working installation.
+        console.warn(`[auth] refused registration for ${email}: administrator setup required`)
+        throw new RefusedRegistration(decision.status, decision.error)
+      }
+      return decision.action === 'grant-admin' ? 'admin' : 'user'
+    })
+    await issueSession(user.id)
     return NextResponse.json(
-      { error: decision.error },
-      { status: decision.status, headers: { 'Cache-Control': 'no-store' } }
+      { user: { id: user.id, email: user.email, role: user.role } },
+      { status: 201, headers: { 'Cache-Control': 'no-store' } }
     )
+  } catch (err) {
+    // A refused claim leaves no trace: no account was written and no session was
+    // minted, because the throw rolled the transaction back.
+    if (err instanceof RefusedRegistration) {
+      return NextResponse.json({ error: err.message }, { status: err.status, headers: { 'Cache-Control': 'no-store' } })
+    }
+    // Unique-email violation, including one that only appears across processes.
+    if (err instanceof DuplicateEmailError) {
+      return NextResponse.json({ error: 'An account with this email already exists' }, { status: 409, headers: { 'Cache-Control': 'no-store' } })
+    }
+    throw err
   }
+}
 
-  const role = decision.action === 'grant-admin' ? 'admin' : 'user'
-  const user = createUser(email, await hashPassword(password), role)
-  await issueSession(user.id)
-
-  return NextResponse.json(
-    { user: { id: user.id, email: user.email, role: user.role } },
-    { status: 201, headers: { 'Cache-Control': 'no-store' } }
-  )
+/** Raised inside the registration transaction to abort it with a response. */
+class RefusedRegistration extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+    this.name = 'RefusedRegistration'
+  }
 }

@@ -17,7 +17,7 @@
 
 import { NextResponse } from 'next/server'
 import {
-  addRateEvent, clearRateEvents, countRateEvents,
+  addRateEvent, clearRateEvents, consumeRateEvent, countRateEvents,
   oldestRateEvent, pruneRateEvents, sweepRateEvents,
 } from './db'
 
@@ -56,14 +56,13 @@ export function createRateLimiter(
     const key = `${namespace}:${rawKey}`
     maybeSweep()
     const now = Date.now()
-    const cutoff = now - windowMs
-    pruneRateEvents(key, cutoff)
-    if (countRateEvents(key, cutoff) >= limit) {
-      const oldest = oldestRateEvent(key, cutoff) ?? now
-      return { ok: false, retryAfterSec: Math.max(1, Math.ceil((oldest + windowMs - now) / 1000)) }
-    }
-    addRateEvent(key, now)
-    return { ok: true, retryAfterSec: 0 }
+    // One atomic transaction: count and consume together, so N processes
+    // admitting the same key cannot each see `limit - 1` and let (N-1) extra
+    // requests through.
+    const { allowed, oldest } = consumeRateEvent(key, now, windowMs, limit)
+    if (allowed) return { ok: true, retryAfterSec: 0 }
+    const since = oldest ?? now
+    return { ok: false, retryAfterSec: Math.max(1, Math.ceil((since + windowMs - now) / 1000)) }
   }
 }
 
@@ -98,14 +97,61 @@ export function createFailureLock(limit: number, windowMs: number, namespace: st
   }
 }
 
-/** Best-effort client IP from common proxy headers, falling back to the socket. */
-export function clientIp(req: Request): string {
-  const fwd = req.headers.get('x-forwarded-for')
-  if (fwd) {
-    const first = fwd.split(',')[0]?.trim()
-    if (first) return first
+/**
+ * Trusted-proxy policy for identifying a client.
+ *
+ * Set `TRUST_PROXY=0` when nothing in front of this app appends to
+ * `X-Forwarded-For`. Every caller then shares one `'unknown'` bucket, which is
+ * stricter than per-IP (a shared budget cannot be evaded), and it is the honest
+ * answer when the header is attacker-controlled.
+ *
+ * The default trusts exactly one hop. That is why it reads the *last* entry
+ * rather than the first: our own server/proxy appends the address it actually
+ * saw, so the rightmost value is the trustworthy one, while everything to its
+ * left can be supplied by the client. The previous implementation used the first
+ * entry, so a caller could send `X-Forwarded-For: <random>` and get a fresh rate
+ * limit on every request.
+ *
+ * A deployment behind a CDN must ensure ingress *replaces* the header; see
+ * SECURITY.md.
+ */
+/**
+ * Typed as a plain string map rather than `NodeJS.ProcessEnv` so callers (and
+ * tests) can pass only the variables they mean without satisfying Node's whole
+ * env shape.
+ */
+export function trustProxyEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  const raw = (env.TRUST_PROXY ?? '').trim().toLowerCase()
+  if (raw === '0' || raw === 'false' || raw === 'off' || raw === 'no') return false
+  return true
+}
+
+/**
+ * Resolve a client identity from request headers. Pure, so the policy is
+ * testable without a running server.
+ */
+export function chooseClientIp(
+  forwardedFor: string | null,
+  realIp: string | null,
+  trustProxy: boolean
+): string {
+  if (!trustProxy) return 'unknown'
+  if (forwardedFor) {
+    const parts = forwardedFor.split(',').map((p) => p.trim()).filter(Boolean)
+    const last = parts[parts.length - 1]
+    if (last) return last
   }
-  return req.headers.get('x-real-ip') ?? 'unknown'
+  if (realIp) return realIp
+  return 'unknown'
+}
+
+/** Client IP for rate-limit keys, under the policy above. */
+export function clientIp(req: Request): string {
+  return chooseClientIp(
+    req.headers.get('x-forwarded-for'),
+    req.headers.get('x-real-ip'),
+    trustProxyEnabled()
+  )
 }
 
 /** Standard 429 body + Retry-After used by every route. */
