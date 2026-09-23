@@ -83,6 +83,28 @@ test('a complete run says what it produced', () => {
   assert.ok(s.title.includes('12,142 points'))
   assert.ok(s.title.includes('49 grounded objects'))
   assert.ok(s.detail.includes('synthesized'), 'the synthesized part is stated on the page')
+  assert.equal(s.tone, 'success', 'a worker-backed run is not a warning')
+})
+
+test('a simulated run is stated as simulated and warned about, not called a model run', () => {
+  const s = status({ groundingSource: 'simulated adapter (no model was run)' })
+  assert.equal(s.id, 'complete')
+  assert.equal(s.tone, 'warning')
+  assert.ok(s.detail.includes('simulated'), 'the page says so')
+  assert.ok(!/LocateAnything-3B detections/.test(s.detail), 'and never credits a model that did not run')
+})
+
+test('a run that stopped is not reported as an untouched browser', () => {
+  // A failed run and a first visit look identical in every counter (no metrics,
+  // no points), so this is the state most likely to be misreported.
+  const failed = status({ pipelineError: 'Grounding failed (HTTP 502)' })
+  assert.equal(failed.id, 'incomplete')
+  assert.equal(failed.tone, 'error')
+  assert.equal(failed.canExport, false)
+  assert.ok(failed.detail.includes('Grounding failed'), 'the cause is carried onto the page')
+
+  const fresh = status({ hasMetrics: false, processingComplete: false, pointCount: 0 })
+  assert.equal(fresh.id, 'empty', 'an untouched browser still reads as empty')
 })
 
 test('a restored model is labelled instead of passed off as a fresh run', () => {
@@ -112,6 +134,35 @@ test('measured and estimated groups never overlap or duplicate a value', () => {
   for (const entry of [...groups.measured, ...groups.estimated]) {
     assert.ok(entry.label.length > 0 && entry.value.length > 0 && entry.note.length > 0)
   }
+})
+
+test('the detection source is reported as its own metric', () => {
+  const groups = buildMetricGroups({ metrics: METRICS, trackedObjects: [] })
+  const source = groups.measured.find((m) => m.id === 'groundingSource')
+  assert.ok(source, 'the source is a first-class metric, not implied by the prose')
+  assert.equal(source.value, 'LocateAnything-3B worker')
+
+  const simulated = buildMetricGroups({
+    metrics: { ...METRICS, groundingSource: 'simulated adapter (no model was run)' },
+    trackedObjects: [],
+  })
+  const note = simulated.measured.find((m) => m.id === 'groundingSource')?.note ?? ''
+  assert.ok(/no model was run/i.test(note), 'a simulated source says so plainly')
+})
+
+test('metrics from an older session without the new fields still render', () => {
+  // Persisted metrics predate groundingSource/synthesis; the page must not print
+  // "undefined" or crash on them.
+  const legacy = { ...METRICS } as Record<string, unknown>
+  delete legacy.groundingSource
+  delete legacy.synthesis
+  const groups = buildMetricGroups({ metrics: legacy as never, trackedObjects: [] })
+  for (const entry of [...groups.measured, ...groups.estimated]) {
+    assert.ok(entry.value.length > 0 && !entry.value.includes('undefined'))
+    assert.ok(entry.note.length > 0)
+  }
+  const s = status({ groundingSource: undefined })
+  assert.equal(s.id, 'complete')
 })
 
 test('observed counts are measured; synthesized geometry is estimated', () => {

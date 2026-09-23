@@ -153,6 +153,7 @@ export default function ResultsPage() {
   const {
     processingComplete, isProcessing, metrics, pointCloud, annotations, trajectory,
     trackedObjects, bounds, videoFile, videoName, metadata, restoredFromStorage, reset,
+    pipelineError,
   } = useDroneVizStore()
 
   const sceneModel = useMemo(
@@ -168,6 +169,7 @@ export default function ResultsPage() {
     objectCount: trackedObjects.length,
     restoredFromStorage,
     groundingSource: metrics?.groundingSource,
+    pipelineError,
   })
 
   const groups = buildMetricGroups({ metrics, trackedObjects })

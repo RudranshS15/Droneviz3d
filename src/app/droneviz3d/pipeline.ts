@@ -23,7 +23,7 @@ export const STEP_DEFINITIONS = [
   { id: 'pointcloud', name: 'Point Cloud Generation', detail: 'Sampling classified 3D points from the height field (surface detail synthesized)', tool: 'Height-field sampling' },
   { id: 'confidence', name: 'Confidence Scoring', detail: 'Per-point weight from the detection heuristic + corroboration — not a calibrated probability', tool: 'Heuristic fusion' },
   { id: 'georef', name: 'Georeferencing', detail: 'Mapping local ENU coordinates to WGS84 lat/lng', tool: 'Equirectangular' },
-  { id: 'export', name: 'Export & Package', detail: 'Packaging client-side PLY / OBJ / CSV downloads', tool: 'Client-side exporters' },
+  { id: 'export', name: 'Package Result', detail: 'Preparing the point cloud for PLY / OBJ / CSV download', tool: 'Client-side exporters' },
 ] as const
 
 // Types
@@ -46,38 +46,25 @@ export type StepUpdate =
   | { stepId: StepId; status: 'complete'; duration: number }
   | { stepId: StepId; status: 'error'; errorMessage: string }
 
-export interface PipelineConfig {
-  stepDurations: number[]
-  onUpdate: (update: StepUpdate) => void
-  onComplete: () => void
-}
+/**
+ * Stages inside `reconstruct()`, in the order it performs them. The store maps
+ * each one onto its `StepId` so the progress display advances because a stage
+ * finished, not because a timer elapsed.
+ */
+export const RECONSTRUCT_STAGES = [
+  'projection', 'tracking', 'heightfield', 'pointcloud', 'confidence', 'georef',
+] as const
+export type ReconstructStage = (typeof RECONSTRUCT_STAGES)[number]
 
 export const STEP_META: Record<StepId, { tool: string; detail: string }> = Object.fromEntries(
   STEP_DEFINITIONS.map((s) => [s.id, { tool: s.tool, detail: s.detail }])
 ) as Record<StepId, { tool: string; detail: string }>
 
-// Generic adapter interface
-export type PipelineAdapter<TConfig = PipelineConfig> = (config: TConfig) => void
-
-export function createDemoAdapter(): PipelineAdapter {
-  return (config: PipelineConfig) => {
-    const { stepDurations, onUpdate, onComplete } = config
-    let totalDelay = 0
-    STEP_DEFINITIONS.forEach((step, i) => {
-      const baseDelay = totalDelay
-      const duration = stepDurations[i] || 1000
-      totalDelay += duration
-      setTimeout(() => { onUpdate({ stepId: step.id, status: 'running', progress: 0 }) }, baseDelay)
-      for (let t = 1; t <= 8; t++) {
-        setTimeout(() => { onUpdate({ stepId: step.id, status: 'running', progress: Math.floor((t / 8) * 100) }) }, baseDelay + (duration * t) / 8)
-      }
-      setTimeout(() => { onUpdate({ stepId: step.id, status: 'complete', duration }) }, baseDelay + duration)
-    })
-    setTimeout(onComplete, totalDelay + 500)
-  }
-}
-
-export const DEFAULT_DURATIONS = [800, 1400, 900, 1000, 1100, 1600, 900, 900, 800]
+// There is deliberately no timer-driven "demo adapter" here any more. It used to
+// animate every step to 100% on a fixed schedule while the real work happened
+// afterwards in one lump, so a finished animation implied an artifact even when
+// the grounding call had failed. Steps are now advanced by the store as each
+// real operation completes — see store.runPipeline.
 
 export function createInitialSteps(): PipelineStep[] {
   return STEP_DEFINITIONS.map((def) => ({

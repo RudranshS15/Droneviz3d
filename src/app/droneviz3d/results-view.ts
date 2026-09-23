@@ -43,6 +43,11 @@ export interface StatusInput {
    * simulated adapter must not be described as a LocateAnything-3B run.
    */
   groundingSource?: string
+  /**
+   * The pipeline stopped before producing geometry. Distinguished from a fresh
+   * visit, which looks identical in every other respect (no metrics, no points).
+   */
+  pipelineError?: string | null
 }
 
 export function deriveReconstructionStatus(input: StatusInput): ReconstructionStatus {
@@ -52,6 +57,16 @@ export function deriveReconstructionStatus(input: StatusInput): ReconstructionSt
   const realModel = !input.groundingSource ? null : /locateanything/i.test(input.groundingSource)
   const objects = `${objectCount} grounded object${objectCount === 1 ? '' : 's'}`
   const points = `${pointCount.toLocaleString()} points`
+
+  // Checked first: a failed run has no metrics and no points, exactly like an
+  // untouched browser, and must not be reported as one.
+  if (input.pipelineError) {
+    return {
+      id: 'incomplete', tone: 'error', canExport: false,
+      title: 'Reconstruction did not produce a model',
+      detail: `The pipeline stopped before generating geometry. ${input.pipelineError}`,
+    }
+  }
 
   if (!hasMetrics && !processingComplete && !isProcessing && pointCount === 0) {
     return {

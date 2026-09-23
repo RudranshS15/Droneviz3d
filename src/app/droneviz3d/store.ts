@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { persist, PersistStorage, StorageValue } from 'zustand/middleware'
 import {
-  PipelineStep, StepUpdate,
-  createInitialSteps, createDemoAdapter, DEFAULT_DURATIONS,
+  PipelineStep, StepUpdate, StepId,
+  createInitialSteps,
 } from './pipeline'
 import {
   Point3D, ReconstructionPose, ConfidenceAnnotation, ReconstructionMetrics,
@@ -15,6 +15,7 @@ import {
 import {
   RawFlightData, validateFlightData, ValidationResult,
 } from './validator'
+import { FlightParams } from './geometry'
 
 export type { PipelineStep, StepId, StepUpdate } from './pipeline'
 export type { Point3D, ReconstructionPose, ConfidenceAnnotation, ReconstructionMetrics } from './reconstruct'
@@ -61,11 +62,22 @@ export interface DroneVizState {
    */
   hydrated: boolean
   markHydrated: () => void
+  /**
+   * Set when the pipeline stops before producing a model, so the UI can show the
+   * failure instead of an empty state. Null while a run is healthy.
+   */
+  pipelineError: string | null
   setVideoFile: (file: File) => void
   setVideoDuration: (sec: number) => void
   setMetadata: (meta: Partial<FlightMetadata>) => void
   setDataConsent: (consent: boolean) => void
   validateAndStart: () => boolean
+  /**
+   * Re-run from the grounding stage with the simulated adapter. Offered
+   * explicitly after a worker failure — never substituted automatically, because
+   * a simulated scene must not be presented as a real run.
+   */
+  runSimulatedDemo: () => void
   updateStep: (update: StepUpdate) => void
   completeProcessing: () => void
   completeProcessingWith: (out: ReconstructOutput) => void
@@ -228,12 +240,140 @@ function sanitizePersisted(persisted: unknown): Partial<PersistedSlice> {
   return out
 }
 
+/** Zustand's setter, narrowed to the shape the pipeline runner uses. */
+type StoreSet = (partial: Partial<DroneVizState>) => void
+type StoreGet = () => DroneVizState
+
+/** The step that runs after each `reconstruct` stage finishes. */
+const AFTER_STAGE: Record<string, StepId> = {
+  projection: 'tracking', tracking: 'heightfield', heightfield: 'pointcloud',
+  pointcloud: 'confidence', confidence: 'georef', georef: 'export',
+}
+
+/**
+ * Run the reconstruction pipeline, advancing each step only when the operation
+ * it names returns.
+ *
+ * Previously a timer animation walked every step to 100% and the real work ran
+ * afterwards in one lump, so a finished progress bar said nothing about whether
+ * grounding had succeeded — and a worker failure was swallowed by a silent
+ * fallback to the simulated adapter. Here every `await` is real work, every
+ * `completeStep` is reachable only if that work returned, and a failure stops the
+ * run and names the step that failed.
+ */
+async function runPipeline(
+  set: StoreSet,
+  get: StoreGet,
+  { allowWorker }: { allowWorker: boolean }
+): Promise<void> {
+  // Which step is running, so a failure is attributed to the operation that
+  // actually failed rather than to a fixed step.
+  let current: StepId = 'extract'
+
+  const startStep = (id: StepId, progress = 0) => {
+    current = id
+    get().updateStep({ stepId: id, status: 'running', progress })
+  }
+  const completeStep = (id: StepId, durationMs = 0) => {
+    get().updateStep({ stepId: id, status: 'complete', duration: durationMs })
+  }
+  const failStep = (id: StepId, message: string) => {
+    get().updateStep({ stepId: id, status: 'error', errorMessage: message })
+    // processingComplete stays false: nothing was produced. The results page reads
+    // `pipelineError` to say so, rather than looking like a fresh visit.
+    set({ isProcessing: false, processingComplete: false, pipelineError: message })
+  }
+
+  const state = get()
+  const validated: ValidationResult = validateFlightData(state.metadata as RawFlightData)
+  if (!validated.ok) {
+    failStep('extract', validated.errors.map((e) => e.message).join('; '))
+    return
+  }
+  const videoFile = state.videoFile
+  const durationSec = state.videoDurationSec > 0 ? state.videoDurationSec : 180
+  const keyframePlan = planKeyframes(durationSec)
+  const flightParams: FlightParams = {
+    gpsLat: validated.data.gpsLat, gpsLng: validated.data.gpsLng,
+    altitude: validated.data.altitude, speed: validated.data.speed,
+    heading: validated.data.heading, durationSec,
+    rtkCorrections: validated.data.rtkCorrections,
+  }
+  const labels = ['building', 'vehicle', 'tree'] as const
+  const useWorker = allowWorker && WORKER_MODE
+  let t0 = Date.now()
+
+  try {
+    // ---- 1. Frame extraction ----
+    startStep('extract')
+    let frames: Blob[] = []
+    if (useWorker) {
+      if (!videoFile) {
+        throw new Error('The video file is no longer in this tab, so keyframes cannot be extracted. Re-upload the video to run worker-mode grounding.')
+      }
+      frames = await extractKeyframes(videoFile, keyframePlan.times.map((t) => t * durationSec))
+    }
+    completeStep('extract', Date.now() - t0)
+
+    // ---- 2. Semantic grounding ----
+    t0 = Date.now()
+    startStep('grounding')
+    let responses: GroundingResponse[]
+    if (useWorker && frames.length > 0) {
+      const adapter = createLocateAnythingAdapter()
+      // Sent in bounded batches, so the progress shown is the progress sent.
+      const BATCH = 6
+      responses = []
+      for (let i = 0; i < frames.length; i += BATCH) {
+        const batch = frames.slice(i, i + BATCH)
+        const part = await adapter(batch.map((image, j) => ({ image, keyframeIndex: i + j, labels: [...labels] })))
+        responses.push(...part)
+        get().updateStep({
+          stepId: 'grounding', status: 'running',
+          progress: Math.min(100, Math.round(((i + batch.length) / frames.length) * 100)),
+        })
+      }
+    } else {
+      responses = await createSimulatedLocateAnythingAdapter(flightParams)(
+        keyframePlan.times.map((_, i) => ({ image: new Blob(), keyframeIndex: i, labels: [...labels] }))
+      )
+    }
+    completeStep('grounding', Date.now() - t0)
+
+    // ---- 3. Geometry, reported stage by stage as reconstruct finishes each ----
+    t0 = Date.now()
+    startStep('projection')
+    const out = reconstruct({
+      flight: validated.data,
+      videoDurationSec: durationSec,
+      grounding: responses,
+      keyframePlan,
+      onStage: (stage) => {
+        completeStep(stage, Date.now() - t0)
+        t0 = Date.now()
+        const next = AFTER_STAGE[stage]
+        if (next) startStep(next)
+      },
+    })
+    // The export payload exists as soon as the result does. No file has been
+    // written yet, which is what the step name says.
+    completeStep('export', Date.now() - t0)
+    get().completeProcessingWith(out)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    failStep(current, useWorker
+      ? `${message} The simulated demo can be run instead from the processing page.`
+      : message)
+  }
+}
+
 export const useDroneVizStore = create<DroneVizState>()(
   persist<DroneVizState>(
     (set, get) => ({
       videoFile: null, videoPreview: null, videoDurationSec: 0, videoName: null,
       metadata: initialMetadata, validationErrors: [],
       steps: createInitialSteps(), currentStep: 0, isProcessing: false, processingComplete: false,
+      pipelineError: null,
       pointCloud: [], trajectory: [], annotations: [], metrics: null,
       trackedObjects: [], bounds: null,
       dataConsent: false,
@@ -242,6 +382,15 @@ export const useDroneVizStore = create<DroneVizState>()(
 
       markRestored: () => set({ restoredFromStorage: true }),
       markHydrated: () => set({ hydrated: true }),
+
+      runSimulatedDemo: () => {
+        if (get().isProcessing) return
+        set({
+          validationErrors: [], isProcessing: true, processingComplete: false, pipelineError: null,
+          steps: createInitialSteps(), currentStep: 0, restoredFromStorage: false,
+        })
+        void runPipeline(set, get, { allowWorker: false })
+      },
 
       setVideoFile: (file) => {
         const preview = URL.createObjectURL(file)
@@ -263,7 +412,7 @@ export const useDroneVizStore = create<DroneVizState>()(
         })),
 
       validateAndStart: () => {
-        const { metadata, videoFile, videoDurationSec, dataConsent } = get()
+        const { metadata, videoFile, dataConsent } = get()
         if (!videoFile) { set({ validationErrors: ['Please upload a video file'] }); return false }
         if (!dataConsent) {
           set({ validationErrors: ['Please consent to on-device processing before starting (see the consent checkbox below the form)'] })
@@ -274,65 +423,15 @@ export const useDroneVizStore = create<DroneVizState>()(
 
         // A new run is by definition fresh, even if the previous model came back
         // from this browser's storage.
-        set({ validationErrors: [], isProcessing: true, processingComplete: false, steps: createInitialSteps(), currentStep: 0, restoredFromStorage: false })
-
-        // Stage 1: staged pipeline visualization. Stage 2 (onComplete): real
-        // reconstruction driven by LocateAnything-3B detections.
-        const pipeline = createDemoAdapter()
-        pipeline({
-          stepDurations: DEFAULT_DURATIONS,
-          onUpdate: (u) => get().updateStep(u),
-          onComplete: () => {
-            const durationSec = videoDurationSec > 0 ? videoDurationSec : 180
-            const keyframePlan = planKeyframes(durationSec)
-            const flightParams = {
-              gpsLat: result.data.gpsLat, gpsLng: result.data.gpsLng,
-              altitude: result.data.altitude, speed: result.data.speed,
-              heading: result.data.heading, durationSec,
-              rtkCorrections: result.data.rtkCorrections,
-            }
-            const simulate = () => {
-              const adapter = createSimulatedLocateAnythingAdapter(flightParams)
-              return adapter(
-                keyframePlan.times.map((_, i) => ({
-                  image: new Blob(), keyframeIndex: i, labels: ['building', 'vehicle', 'tree'],
-                }))
-              )
-            }
-            const run = async () => {
-              let responses: GroundingResponse[]
-              if (WORKER_MODE) {
-                try {
-                  // Real LocateAnything-3B: extract actual keyframes from the video
-                  // in the browser, then ground them via the proxy route (the
-                  // worker token stays server-side).
-                  const frames = await extractKeyframes(
-                    videoFile,
-                    keyframePlan.times.map((t) => t * durationSec)
-                  )
-                  responses = await createLocateAnythingAdapter()(
-                    frames.map((image, i) => ({
-                      image, keyframeIndex: i, labels: ['building', 'vehicle', 'tree'],
-                    }))
-                  )
-                } catch (err) {
-                  // Worker unreachable / not configured: keep the demo usable and
-                  // be loud about why the output is simulated.
-                  console.warn('[DroneViz3D] LocateAnything worker grounding failed — falling back to the simulated adapter:', err)
-                  responses = await simulate()
-                }
-              } else {
-                responses = await simulate()
-              }
-              const out = reconstruct({
-                flight: result.data, videoDurationSec: durationSec,
-                grounding: responses, keyframePlan,
-              })
-              get().completeProcessingWith(out)
-            }
-            run().catch(() => get().completeProcessing())
-          },
+        set({
+          validationErrors: [], isProcessing: true, processingComplete: false, pipelineError: null,
+          steps: createInitialSteps(), currentStep: 0, restoredFromStorage: false,
         })
+
+        // Real execution: every step is advanced by the operation it names. A
+        // worker failure stops the run and is reported — it is never quietly
+        // replaced with a simulated scene.
+        void runPipeline(set, get, { allowWorker: true })
         return true
       },
 
@@ -359,7 +458,7 @@ export const useDroneVizStore = create<DroneVizState>()(
       reset: () => {
         set({
           videoFile: null, videoPreview: null, videoDurationSec: 0, videoName: null,
-          metadata: initialMetadata, validationErrors: [],
+          metadata: initialMetadata, validationErrors: [], pipelineError: null,
           steps: createInitialSteps(), currentStep: 0, isProcessing: false, processingComplete: false,
           pointCloud: [], trajectory: [], annotations: [], metrics: null,
           trackedObjects: [], bounds: null, restoredFromStorage: false,

@@ -21,6 +21,7 @@ import {
   projectBoxToGround, deduplicateDetections,
 } from './grounding'
 import { ValidatedFlightData } from './validator'
+import { ReconstructStage } from './pipeline'
 
 export interface Point3D {
   x: number; y: number; z: number
@@ -353,6 +354,11 @@ export interface ReconstructInput {
   /** LocateAnything-3B responses, one per keyframe (from the adapter) */
   grounding: GroundingResponse[]
   keyframePlan: KeyframePlan
+  /**
+   * Called after each internal stage finishes. Lets the UI advance only when
+   * work actually completed, instead of running a fixed animation.
+   */
+  onStage?: (stage: ReconstructStage) => void
 }
 
 export interface ReconstructOutput extends ReconstructionResult {
@@ -365,7 +371,7 @@ export interface ReconstructOutput extends ReconstructionResult {
  * Deterministic: same input ⇒ identical output.
  */
 export function reconstruct(input: ReconstructInput): ReconstructOutput {
-  const { flight, videoDurationSec, grounding, keyframePlan } = input
+  const { flight, videoDurationSec, grounding, keyframePlan, onStage } = input
   const cam: CameraModel = {
     focal35: flight.cameraFocalLength,
     frameWidth: flight.cameraWidth,
@@ -389,19 +395,24 @@ export function reconstruct(input: ReconstructInput): ReconstructOutput {
       if (p) projected.push(p)
     }
   })
+  onStage?.('projection')
 
   // 2. Deduplicate across keyframes (multi-view corroboration).
   const tracked = deduplicateDetections(projected)
+  onStage?.('tracking')
 
   // 3. Height field + point cloud + trajectory. The cloud holds scene geometry
   //    only; the flight path is the separate `trajectory` array below.
   const extent = corridorHalfExtent(tracked, flightParams) * 2
   const cells = buildHeightField(tracked, extent, seed)
+  onStage?.('heightfield')
   const points = synthesizePointCloud(cells, tracked, flightParams, seed)
+  onStage?.('pointcloud')
   const trajectory = buildTrajectory(flightParams)
 
   // 4. Annotations + metrics.
   const annotations = buildAnnotations(tracked, flightParams, keyframePlan.count)
+  onStage?.('confidence')
   const avgConf = points.length > 0 ? points.reduce((s, p) => s + p.confidence, 0) / points.length : 0
   const labels = Array.from(new Set(tracked.map((t) => t.label)))
   const coverage = footprintCoverage(cells, extent)
@@ -447,6 +458,7 @@ export function reconstruct(input: ReconstructInput): ReconstructOutput {
         const p = poseToLngLat(flightParams, poseAt(flightParams, 0, 0))
         return { minLat: p.lat, maxLat: p.lat, minLng: p.lng, maxLng: p.lng }
       })()
+  onStage?.('georef')
 
   return {
     points, trajectory, annotations, metrics, bounds, groundingSource: source,

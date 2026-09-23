@@ -7,7 +7,7 @@ import { useDroneVizStore, STEP_META, isRunning, isComplete, isError, getProgres
 
 export default function ProcessingPage() {
   const router = useRouter()
-  const { processingComplete, steps, videoFile, hydrated } = useDroneVizStore()
+  const { processingComplete, steps, videoFile, hydrated, pipelineError, runSimulatedDemo, validateAndStart } = useDroneVizStore()
 
   // A restored session has no File object (videoFile is never persisted), so a
   // completed run must not be mistaken for an empty one while storage settles.
@@ -29,10 +29,12 @@ export default function ProcessingPage() {
           <span className="text-[#e7e5e4]">Processing</span>
         </nav>
         <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-[#e7e5e4] mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-          {processingComplete ? 'Reconstruction complete' : 'Processing pipeline'}
+          {pipelineError ? 'Reconstruction stopped' : processingComplete ? 'Reconstruction complete' : 'Processing pipeline'}
         </h1>
         <p className="text-[#a8a29e] text-[14px] mb-8">
-          {processingComplete ? 'Your 3D model is ready.' : currentStep ? `Running: ${currentStep.name}` : 'Initializing...'}
+          {pipelineError
+            ? 'The pipeline did not finish, so no model was generated.'
+            : processingComplete ? 'Your 3D model is ready.' : currentStep ? `Running: ${currentStep.name}` : 'Initializing...'}
         </p>
 
         <div className="mb-10">
@@ -118,6 +120,37 @@ export default function ProcessingPage() {
             )
           })}
         </div>
+
+        {pipelineError && (
+          <div role="alert" className="mt-6 p-5 rounded-xl border border-red-500/40 bg-red-500/[0.06]">
+            <h2 className="text-[14px] font-semibold text-red-200 mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              No model was generated
+            </h2>
+            <p className="text-[12px] text-red-200/90 leading-relaxed mb-4" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+              {pipelineError}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={() => { void validateAndStart() }}
+                className="px-5 py-2.5 rounded-lg border border-white/[0.15] text-[#e7e5e4] text-[13px] font-medium hover:bg-[#1c1917]/50 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#d4a053]"
+              >
+                Try again
+              </button>
+              <button
+                type="button"
+                onClick={runSimulatedDemo}
+                className="px-5 py-2.5 rounded-lg bg-[#c27a3a] text-[#0c0a09] text-[13px] font-semibold hover:bg-[#d4a053] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#d4a053]"
+              >
+                Run the simulated demo instead
+              </button>
+            </div>
+            <p className="text-[11px] text-[#a8a29e] mt-3 leading-relaxed">
+              The simulated demo generates an illustrative scene from your flight metadata without a model. Its
+              result is labelled as simulated everywhere it appears.
+            </p>
+          </div>
+        )}
 
         {processingComplete && (
           <div className="mt-10 flex flex-col sm:flex-row items-center gap-4">
