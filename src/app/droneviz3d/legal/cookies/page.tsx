@@ -2,21 +2,23 @@ import { LegalPage } from '../legal-page'
 
 export const metadata = {
   title: 'Cookies Policy — DroneViz3D',
-  description: 'DroneViz3D sets no cookies and runs no trackers. This page explains why no consent banner is shown and what would change if that ever does.',
+  description: 'DroneViz3D runs no trackers and sets no cookies for ordinary visitors or guests. This page explains why no consent banner is shown and what would change if that ever does.',
 }
 
 export default function CookiesPage() {
   return (
     <LegalPage
       title="Cookies Policy"
-      intro="DroneViz3D sets no cookies and no similar tracking technologies. This page documents that fact, what the app does store in your browser (one entry, your own model, deleted on request), why you are not asked for cookie consent, and what would change if tracking were ever added."
+      intro="DroneViz3D sets no cookies and no similar tracking technologies for visitors or guests. The single exception is the administrator sign-in, which sets one strictly-necessary session cookie — described in §4 so this page is accurate for everyone rather than only for guests. This page documents what the app stores in your browser (one entry, your own model, deleted on request), why you are not asked for cookie consent, and what would change if tracking were ever added."
       breadcrumb="Cookies Policy"
     >
       <section>
-        <h2>1. Do we use cookies? No.</h2>
+        <h2>1. Do we use cookies? Not for visitors or guests.</h2>
         <p>
-          We do not set, read, or share any cookies — functional, analytics, advertising, or otherwise. We
-          also do not use IndexedDB, service workers, or fingerprinting for tracking. The only browser
+          Browsing DroneViz3D and generating a model sets no cookies at all. The one exception is signing in
+          to the administrator area, which sets a single session cookie necessary to keep you signed in
+          (&sect;4). We never set analytics, advertising or tracking cookies of any kind, and we do not use
+          IndexedDB, service workers, or fingerprinting for tracking. The only browser
           storage we use is a single <strong>localStorage</strong> entry in this site&rsquo;s origin holding
           your generated 3D model, so you can come back to it without creating an account. It contains only
           your own reconstruction and the flight metadata it was georeferenced with, never the video file,
@@ -67,16 +69,40 @@ export default function CookiesPage() {
       </section>
 
       <section>
-        <h2>4. Third-party requests</h2>
+        <h2>4. The one cookie: administrator sign-in</h2>
+        <p>
+          Signing in at <code>/droneviz3d/admin</code> sets a single <strong>httpOnly</strong> session cookie
+          holding an opaque random token, plus a CSRF token the sign-in page reads. Both exist only to keep
+          the session you asked for and to prevent another site from acting as you; neither is used to
+          measure, profile or advertise, and signing out deletes them. This is the same
+          &ldquo;strictly necessary&rdquo; ground that applies to the model entry above, which is why it is
+          disclosed here rather than gated behind a banner. If you never sign in — and a guest never can —
+          none of this is set.
+        </p>
+        <p>
+          The administrator area also keeps account records (email, argon2id password hash, role, session
+          tokens) in a small SQLite database on the server. That database holds no video, no keyframes and
+          no reconstruction data.
+        </p>
+      </section>
+
+      <section>
+        <h2>5. Third-party requests</h2>
         <p>
           The page loads no third-party scripts, fonts, images, iframes, or analytics. All assets are served
           from the same origin as the app. You can verify this with your browser&rsquo;s network inspector:
           after the initial page load, no requests leave your machine except to the site itself.
         </p>
+        <p>
+          One exception, in the operator-configured <strong>worker mode</strong>: the app then sends sampled
+          keyframes to the operator&rsquo;s own inference worker for grounding. That is a first-party request
+          to a service the operator runs, disclosed in the upload consent checkbox and in the Privacy Policy
+          &sect;5 — not a third-party embed or tracker.
+        </p>
       </section>
 
       <section>
-        <h2>5. If we ever add cookies or analytics</h2>
+        <h2>6. If we ever add cookies or analytics</h2>
         <p>
           Should a future version add analytics or embedded content, this policy will be updated first, the
           Privacy Policy will disclose each third party, and a consent mechanism compliant with the DPDP

@@ -1,33 +1,55 @@
 # Compliance Notes
 
-Last reviewed: September 7, 2026 (India-focused deployment)
+Last reviewed: September 24, 2026 (India-focused deployment)
 
 ## 1. Data protection — DPDP Act, 2023
 
 - **Consent before processing**: the upload form requires an explicit, purpose-limited
   consent checkbox (`data-consent`) before any reconstruction starts. The consent
-  purpose ("process this video + metadata on your device only, to generate the 3D
-  model") is stated in plain language next to the checkbox, per §6(1) and the
-  notice requirements of §5(1) DPDP Act.
+  purpose is stated in plain language next to the checkbox, per §6(1) and the notice
+  requirements of §5(1) DPDP Act — and it is **mode-aware**, because the two modes
+  process different things:
+  - *Browser/simulated mode* — "processing this video and the flight metadata I entered,
+    on my device only".
+  - *Worker mode* — additionally "sending sampled keyframes to the operator-run
+    LocateAnything-3B inference worker". The video itself is still never uploaded.
 - **Purpose limitation & data minimization**: only the video, the flight metadata the
   user types, and a session consent flag are processed. Nothing else is collected.
   The consent notice lists exactly what is processed and why.
-- **Storage limitation**: all data lives in in-memory page state and is destroyed on
-  tab close or Reset. No server, database, or persistent storage is involved.
-- **Withdrawal of consent**: closing the tab or pressing Reset stops processing; the
+- **Storage limitation**: the video remains in-memory page state and is gone on tab
+  close. The *generated model* and its flight metadata persist in this browser's
+  `localStorage` until Reset, so a guest can return to it without an account (see §2),
+  and Reset deletes the entry outright.
+- **Withdrawal of consent**: Reset stops processing and erases the stored model; the
   consent notice says so explicitly (§6(4) right to withdraw).
+- **Server-side data, and what it is for**: the *administrator* area has a SQLite
+  database holding admin/user account records (email, argon2id password hash, role,
+  session tokens). It holds no reconstruction data, no video and no keyframes. A
+  registration exists only if someone deliberately signs in — using the app as a guest
+  creates no account and no server-side record.
 - **Children (§9)**: the Service does not target children and collects no personal
   data, so no verifiable parental consent flow is triggered.
 - **Grievance redressal**: the Privacy Policy names the repository issue tracker as
   the contact channel. If the project ever processes personal data on a server, a
   Data Fiduciary contact and grievance officer must be added there.
-- **Cross-border transfer**: not applicable — no data leaves the device.
+- **Cross-border transfer**: not applicable in browser/simulated mode — nothing leaves
+  the device. In worker mode the sampled keyframes go to the operator-configured worker
+  (typically the same machine or local network); an operator who runs that worker
+  elsewhere is responsible for the transfer basis, and the Privacy Policy §5 names the
+  mode rather than claiming nothing is transmitted.
 
 ## 2. Cookies / ePrivacy-style consent
 
-- The app sets **zero cookies**, no IndexedDB, no fingerprinting, no analytics SDKs,
-  and no third-party scripts, fonts, or iframes anywhere in `src/`. Verified by code
-  audit: no `document.cookie`, no tracking storage APIs.
+- The **reconstruction app sets no cookies**, and there are no IndexedDB databases, no
+  fingerprinting, no analytics SDKs, and no third-party scripts, fonts, or iframes
+  anywhere in `src/`. Verified by code audit: no `document.cookie` outside the auth
+  layer, no tracking storage APIs.
+- **The one exception is the administrator area**: signing in at `/droneviz3d/admin`
+  sets a single httpOnly session cookie plus a double-submit CSRF token. That is the
+  ePrivacy Art. 5(3) *strictly necessary* ground again — the cookie exists to hold the
+  session the operator just asked for, is not used for tracking, and is deleted on
+  sign-out. Nothing is set for anyone who never signs in. An ordinary visitor, and
+  therefore every guest, is unaffected.
 - **One localStorage entry** (`droneviz3d-model`) holds the generated 3D model (point
   cloud, per-object detections, metrics, flight metadata, file name) so a guest can
   come back to their model without an account — it must therefore outlive the tab, and
@@ -105,12 +127,17 @@ Last reviewed: September 7, 2026 (India-focused deployment)
 ## 8. Security
 
 A full security audit is in [`SECURITY.md`](SECURITY.md). Summary: `npm audit` shows
-0 vulnerabilities (Next 14→15, React 18→19, PostCSS override); production security
-headers (CSP, HSTS, frame/permissions policies) are set in `next.config.js`;
-`grounding-worker.py` enforces bearer-token auth, per-IP rate limiting, upload caps,
-and strict CORS. The app has no backend/database/user accounts today, so auth,
-password hashing, and SQL injection protections are documented as a checklist for
-when a server is added — they are not silently claimed as done.
+0 vulnerabilities; production security headers (CSP, HSTS, frame/permissions policies) are
+set in `next.config.js`; `grounding-worker.py` enforces bearer-token auth, per-IP rate
+limiting, upload caps, and strict CORS.
+
+There **is** a backend today, for the administrator area only: Next route handlers over
+Node's built-in `node:sqlite`, with argon2id password hashing, session cookies, a
+double-submit CSRF token, parameterized statements throughout, and rate limiting backed by
+an atomic check-and-consume transaction. `npm audit: 0 vulnerabilities` is a
+dependency-scan result and not a proof of security; the claims a reader can check are listed
+in SECURITY.md with the caveats attached, including the ones that depend on deployment
+(trusted-proxy configuration, body limits at ingress, shared rate-limit storage).
 
 ## 9. Open items (not blocking, but do before any public launch)
 

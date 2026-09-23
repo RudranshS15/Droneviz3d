@@ -44,8 +44,10 @@ export default function TermsPage() {
       <section>
         <h2>3. Your content, your responsibility</h2>
         <p>
-          Your video and metadata stay on your device; we never receive them. You retain all rights to your
-          footage. You confirm that:
+          Your video file and flight metadata are never uploaded and stay on your device. (In the operator-
+          configured worker mode, sampled keyframes derived from the video are sent to the inference worker for
+          grounding — see the Privacy Policy &#167;5. The video itself is still never transmitted.) You retain
+          all rights to your footage. You confirm that:
         </p>
         <ul>
           <li>you own the footage or have permission to process it;</li>

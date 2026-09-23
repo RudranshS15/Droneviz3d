@@ -1,8 +1,18 @@
 # DroneViz3D
 
-**Single-Pass Drone Video to Accurate 3D Model Generation System**
+**Single-pass drone video to a georeferenced semantic 3D scene**
 
 Smart India Hackathon 2026 · SIH26158 · Team ByteCraft
+
+> **What this produces, in one paragraph.** Detections from NVIDIA's LocateAnything-3B are
+> projected through the camera model onto the ground plane, deduplicated across keyframes, and
+> assembled into a point cloud. Object *positions and footprints* come from those detections.
+> Object *heights* come from a per-class prior (`CLASS_HEIGHT_PRIOR`), and every surface point
+> between objects is synthesized — so the result is an **illustrative semantic scene, not a
+> measured reconstruction**, and a single pass with no stereo overlap cannot make it one. No
+> mesh, no texture, no orthophoto. `exporter.ts` writes points and vertices only. The UI, the
+> exports and the legal pages all say so; if a claim about this system cannot be checked
+> against the code, treat it as unverified.
 
 ## Quick Start
 
@@ -29,8 +39,9 @@ running dev server, pick another port: `npm start -- -p 3100`.
 
 ## Security
 
-See [`SECURITY.md`](SECURITY.md) for the full audit: zero vulnerabilities, security
-headers, hardened inference worker, and the admin backend controls.
+See [`SECURITY.md`](SECURITY.md) for the full audit: the dependency scan, security
+headers, the hardened inference worker, the admin backend controls, and §11 — the items
+that depend on deployment and are deliberately **not** claimed as closed.
 
 ## Admin backend
 
@@ -83,4 +94,4 @@ browser. See the Privacy Policy §§3 and 6, and the Cookies Policy §3.
 - `/droneviz3d/upload` — Video upload + GPS metadata form
 - `/droneviz3d/processing` — 10-step pipeline visualization
 - `/droneviz3d/viewer` — Interactive 3D point cloud viewer
-- `/droneviz3d/results` — Metrics, confidence maps, export
+- `/droneviz3d/results` — Metrics (measured vs estimated), detection-quality distribution, export

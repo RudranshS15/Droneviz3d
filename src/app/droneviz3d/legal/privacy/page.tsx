@@ -9,7 +9,7 @@ export default function PrivacyPolicyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
-      intro="DroneViz3D is built so your drone footage never leaves your device. This policy explains exactly what data the service touches, what it never collects, and the rights you have under Indian law."
+      intro="DroneViz3D is built so your drone footage is processed on your own device, and the raw video is never uploaded. This policy explains exactly what data the service touches, the one operator-configured mode in which sampled frames do leave your device (&#167;5), what it never collects, and the rights you have under Indian law."
       breadcrumb="Privacy Policy"
     >
       <section>

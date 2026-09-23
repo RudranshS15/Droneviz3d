@@ -1,19 +1,29 @@
 # Security Audit — DroneViz3D
 
-Audit date: September 8, 2026 · Result: **npm audit: 0 vulnerabilities**
+Audit date: September 24, 2026 · Dependency scan: **npm audit: 0 vulnerabilities**
+
+> `npm audit` is a dependency-scan result. It says nothing about the application's own
+> code or its deployment, and it is not a penetration test or a certification. The
+> controls below list what was actually checked and, in §11, what could not be verified
+> from the source alone. Read those caveats before treating any row as proof.
 
 ## Architecture matters here
 
-DroneViz3D is a Next.js app: 3D reconstruction runs **entirely in the browser**
-(Zustand state + WebGL canvas; the raw video never leaves the device). Since
-September 2026 it also ships an **optional admin backend** (SQLite + session auth,
-see §9) that the operator enables by creating the first account at
-`/droneviz3d/admin`, which requires the bootstrap token to claim an admin role
-on a deployed instance (§9.1). The reconstruction pipeline itself still has no
-server-side involvement; the admin backend only stores login data.
+DroneViz3D is a Next.js app: 3D reconstruction runs in the browser (Zustand state +
+WebGL canvas). The **raw video never leaves the device** in either deployment mode.
+There are two modes, and they differ in what does leave it:
 
-The only other network-facing component is `grounding-worker.py` (the optional
-LocateAnything-3B inference service), which has been hardened — see §8.
+- **Browser/simulated mode (default)** — nothing leaves the device at all.
+- **Worker mode** (`NEXT_PUBLIC_GROUNDING_MODE=worker`) — the app extracts sampled
+  keyframes from the video in the browser and sends *only those frames* through the
+  server-side proxy at `/api/ground` to `grounding-worker.py`. The video file and the
+  flight metadata are never uploaded. A worker failure stops the run and is reported;
+  it no longer falls back silently (§8).
+
+It also ships an **admin backend** (SQLite + session auth, see §9) that the operator
+enables by creating the first account at `/droneviz3d/admin`, which requires the
+bootstrap token to claim an admin role on a deployed instance (§9.1). That backend
+stores login data only — no video, no keyframes, no reconstruction data.
 
 ## Control-by-control status
 
@@ -26,11 +36,11 @@ LocateAnything-3B inference service), which has been hardened — see §8.
 | 5 | User access control | ✅ | Roles: `user` / `admin`, with an **owner allowlist** (`OWNER_EMAILS`, §9.2): only listed addresses are admin by default, only an owner may grant the role to anyone else, an owner account can never be demoted or deleted by anyone, and a promoted admin may remove regular users but never a peer admin or the owner. Claiming admin additionally requires `ADMIN_BOOTSTRAP_TOKEN` on any deployment, so a public instance cannot be seized before the owner registers (§9.1). Admin-only: user list, **role change (promote/demote)**, delete user (self-delete + last-admin guards), system status. Role changes **revoke the user's sessions** so a token minted under the old role can't be reused; new sign-in gets a rotated cookie. |
 | 6 | Form sanitization | ✅ | All inputs validated client-side (`validator.ts`: ranges, types, dates) before use; React escapes all rendered values; labels sent to the worker are length/character-capped and deduplicated. CSV export contains only numeric values (no formula-injection vector). |
 | 7 | XSS protection | ✅ | Zero `dangerouslySetInnerHTML`, `innerHTML`, `eval`, or `document.write` in `src/` (verified by search). Worker output is parsed with regex into numbers and rendered as text/canvas only. Production CSP active (see §7). |
-| 8 | Rate limiting | ✅ | Login/register/password-change: 5–10 attempts per 15 min per IP **plus** per-account failure locks. Admin API: 120 calls/min/IP. Grounding proxy: 60 POSTs/10 min/IP. Worker: 30 req/min/IP. All site limiters are **backed by the shared SQLite store** (`rate_events` table in the same `data/` DB), so they hold across multiple server processes/instances on one volume — not just one process's memory. |
-| 9 | API endpoints secured | ✅ | Worker: bearer-token auth (required unless loopback + explicitly disabled), upload size/dimension/format caps, label caps, `Cache-Control: no-store`, `docs` endpoints disabled. |
+| 8 | Rate limiting | ✅ | Login/register/password-change: 5–10 attempts per 15 min per IP **plus** per-account failure locks that survive IP rotation. Admin API: 120 calls/min/IP. Grounding proxy: 60 POSTs/10 min/IP. Worker: 30 req/min/IP. Site limiters are backed by the shared SQLite store and each check-and-consume runs inside one `BEGIN IMMEDIATE` transaction (`consumeRateEvent`), so the limit holds across processes rather than being advisory. Client identity follows an explicit trusted-proxy policy: the *last* `X-Forwarded-For` entry wins, and `TRUST_PROXY=0` ignores forwarding headers entirely — the previous first-entry logic let a caller mint a fresh budget per request by inventing a header. Across hosts with no shared disk this needs Redis (§11). |
+| 9 | API endpoints secured | ✅ | Worker: bearer-token auth (required unless loopback + explicitly disabled), upload size/dimension/format caps, label caps, `Cache-Control: no-store`, `docs` endpoints disabled. Proxy: same-origin gate, rate limit, per-frame caps, an **aggregate body cap enforced from `Content-Length` before the body is buffered**, and bounded upstream concurrency (excess requests get 503 + `Retry-After`, not an unbounded GPU queue). |
 | 10 | CORS checked | ✅ | Worker CORS locked to `http://localhost:3000` + `http://127.0.0.1:3000`, no credentials. Site itself is same-origin; no third-party origins anywhere. |
 | 11 | Security headers | ✅ | `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, CSP + HSTS (production), `X-Powered-By` removed. |
-| 12 | Debug mode off | ✅ | No debug flags and no `console.log` in `src/`; production build is stripped. Three deliberate `console.warn` calls exist, all operator diagnostics carrying no secrets: oversized-model persistence, worker-grounding fallback, and a refused administrator setup. React Strict Mode enabled (dev-only behavior, catches bugs early). |
+| 12 | Debug mode off | ✅ | No debug flags and no `console.log` in `src/`; production build is stripped. Two deliberate `console.warn` calls exist, both operator diagnostics carrying no secrets: an oversized model that cannot be persisted, and a refused administrator setup. React Strict Mode enabled (dev-only behavior, catches bugs early). |
 | 13 | Dependencies updated | ✅ | Next 14.2.35 → **15.5.25**, React 18 → **19.2**, Zustand 4 → **5**, PostCSS 8.4.31 → **8.5.28** (incl. the copy bundled inside Next, forced via `overrides`). |
 | 14 | Unused packages removed | ✅ | All deps are used (next/react/react-dom/zustand + Tailwind toolchain). None removed; none added beyond the upgrade. |
 | 15 | Exposed files checked | ✅ | `git ls-files` shows no secrets, keys, or credentials. `.gitignore` now also covers all `.env.*`, certs/keys, logs, coverage, and `screenshots/`. |
@@ -38,7 +48,7 @@ LocateAnything-3B inference service), which has been hardened — see §8.
 | 17 | Passwords hashed | ✅ | argon2id (m=19456 KiB, t=2, p=1 — OWASP parameters) via `@node-rs/argon2`. Verification is constant-time and failure-agnostic; hashes are never logged. |
 | 18 | SQL injection protection | ✅ | Every query is a prepared statement (`node:sqlite` built-in module — zero native deps); no string-built SQL anywhere in `src/lib/db.ts`. |
 | 19 | HTTPS enabled | ✅* | `*` Deployment-level. HSTS (preload) + `upgrade-insecure-requests` are configured and activate automatically on HTTPS hosts. Local `npm run dev` is intentionally plain HTTP on loopback. |
-| 20 | Security audit run | ✅ | `npm audit` → **0 vulnerabilities** (was 2 high). Typecheck clean; production build passes (§10). |
+| 20 | Security audit run | ✅ | `npm audit` → **0 vulnerabilities** (was 2 high). `npm run verify` = smoke + typecheck + lint + 180 tests + production build. The smoke step checks the Node version, `node:sqlite` availability and writable storage, so a mis-provisioned deployment fails clearly instead of 500-ing on the first request. Deployment-dependent items are listed in §11 rather than claimed as closed. |
 
 ## 7. Content Security Policy (production)
 
@@ -56,8 +66,11 @@ The web app talks to the worker through a server-side proxy (`src/app/api/ground
 `Authorization: Bearer` by the proxy — the token is never in the browser bundle.
 The public flag `NEXT_PUBLIC_GROUNDING_MODE=worker` (not a secret) switches the
 app to the real backend; keyframes are extracted from the video in the browser and
-POSTed through the proxy. Without a token the proxy returns 503 and the store
-falls back to the simulated adapter.
+POSTed through the proxy. Without a token the proxy returns 503. The client no
+longer substitutes the simulated adapter on failure: the run stops, the failed step
+is named on the processing page, and the simulated demo is offered explicitly and
+labelled as simulated wherever its result appears. A silent fallback would let a
+synthetic scene be read as a real run.
 
 - **Auth**: `WORKER_TOKEN` / `--token`; `/ground` and `/health` return 401 without
   a valid `Authorization: Bearer` header. Refuses to bind a non-loopback address
@@ -186,9 +199,40 @@ is the only lockout protection. Parsing and matching are unit-tested in
 
 ```bash
 npm audit                 # 0 vulnerabilities
+npm run smoke             # Node version, node:sqlite, writable storage
 npx tsc --noEmit          # clean
+npm run lint              # clean
+npm test                  # 180 tests
 npm run build             # production build passes
+npm run verify            # all of the above, in order
 ```
+
+## 11. What is not claimed (deployment-dependent)
+
+These were checked in the source but cannot be verified from it, because they depend
+on how the app is deployed. Treat them as operator actions, not as closed findings:
+
+- **Trusted proxy.** `clientIp()` reads the *last* `X-Forwarded-For` entry, which is
+  correct when exactly one trusted hop appends to the header. If ingress passes a
+  client-supplied header through unmodified, the identity is attacker-controlled and
+  per-IP limits can be evaded. Configure ingress to replace the header, and set
+  `TRUST_PROXY=0` where nothing trustworthy appends to it.
+- **Request-body limits at ingress.** The proxy caps the aggregate body from
+  `Content-Length`, which a chunked request omits. A reverse proxy or platform limit
+  on request size is still required for that case.
+- **Shared rate-limit storage.** The limiter is atomic *within one SQLite database*.
+  Multiple hosts with no shared volume each keep their own counters, so the effective
+  limit multiplies by the number of instances. Use Redis behind the same interface for
+  a multi-host deployment.
+- **TLS and HSTS.** HSTS and `upgrade-insecure-requests` are configured and activate
+  on an HTTPS host; the certificate, redirect and host configuration are deployment
+  concerns.
+- **Worker exposure.** `grounding-worker.py` is designed for loopback. Exposing it
+  beyond that requires a reverse proxy with TLS, real auth and a persistent rate-limit
+  store; its own rate limiting is an in-memory sliding window.
+- **No penetration test.** No application execution, fuzzing or vulnerability
+  exploitation was performed as part of this audit. No benchmark of reconstruction
+  accuracy was measured.
 
 ## Reporting a vulnerability
 

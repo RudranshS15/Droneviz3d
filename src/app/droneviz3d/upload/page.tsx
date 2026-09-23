@@ -75,8 +75,9 @@ export default function UploadPage() {
           Upload drone data
         </h1>
         <p className="text-[#a8a29e] text-[14px]">
-          Provide your video file and flight metadata to begin 3D reconstruction. Everything is processed
-          locally in your browser — nothing is uploaded.
+          {workerMode
+            ? 'Provide your video file and flight metadata to begin 3D reconstruction. The video is decoded in your browser; sampled keyframes alone are sent to the grounding worker (see the consent note below), and the video itself is never uploaded.'
+            : 'Provide your video file and flight metadata to begin 3D reconstruction. Everything is processed locally in your browser — nothing is uploaded.'}
         </p>
       </div>
 

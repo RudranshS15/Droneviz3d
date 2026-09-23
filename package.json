@@ -2,7 +2,7 @@
   "name": "droneviz3d",
   "version": "1.0.0",
   "private": true,
-  "description": "Single-Pass Drone Video to Accurate 3D Model Generation — SIH 2026",
+  "description": "Single-pass drone video to a georeferenced semantic 3D scene (illustrative synthesis, not a measured reconstruction) — SIH 2026",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
