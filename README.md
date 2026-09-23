@@ -11,6 +11,12 @@ Smart India Hackathon 2026 · SIH26158 · Team ByteCraft
 
 Open http://localhost:3000/droneviz3d
 
+`npm run build` refuses to run while the dev server is up: both write the same
+`.next` directory, and building during development deletes the chunks an open tab
+is still requesting (it shows up in the browser as `ChunkLoadError: Loading chunk
+… failed`, or a script refused for being served as `text/plain`). Stop the dev
+server first — or set `ALLOW_BUILD_WITH_DEV_SERVER=1` to bypass the check.
+
 ## Tech Stack
 - Next.js 15 + React 19
 - Tailwind CSS

@@ -5,6 +5,7 @@
   "description": "Single-Pass Drone Video to Accurate 3D Model Generation — SIH 2026",
   "scripts": {
     "dev": "next dev -p 3000",
+    "prebuild": "node scripts/check-dev-server.mjs",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
