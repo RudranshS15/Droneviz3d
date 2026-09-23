@@ -11,11 +11,15 @@ Smart India Hackathon 2026 · SIH26158 · Team ByteCraft
 
 Open http://localhost:3000/droneviz3d
 
-`npm run build` refuses to run while the dev server is up: both write the same
-`.next` directory, and building during development deletes the chunks an open tab
-is still requesting (it shows up in the browser as `ChunkLoadError: Loading chunk
-… failed`, or a script refused for being served as `text/plain`). Stop the dev
-server first — or set `ALLOW_BUILD_WITH_DEV_SERVER=1` to bypass the check.
+Development and production output go to separate directories, so the dev server
+can keep running while you build or run the full verify gate: `npm run dev`
+writes `.next/`, while `npm run build` and `npm start` use `.next-build/`.
+Sharing one directory is what used to let a build delete the dev chunks an open
+tab was still requesting (it surfaced as `ChunkLoadError: Loading chunk … failed`,
+or a script refused for being served as `text/plain`).
+
+Both commands default to port 3000, so to serve a production build beside a
+running dev server, pick another port: `npm start -- -p 3100`.
 
 ## Tech Stack
 - Next.js 15 + React 19

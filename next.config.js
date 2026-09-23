@@ -1,8 +1,35 @@
 /** @type {import('next').NextConfig} */
 
+// Next loads this file as CommonJS, so it stays CommonJS to match. (The shared
+// ESLint config forbids require(), hence the one-line exception; an ESM
+// next.config.mjs cannot import next/constants — the package does not expose it
+// to ESM — so the phase constants are not reachable that way.)
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { PHASE_DEVELOPMENT_SERVER } = require('next/constants')
+
 const isProd = process.env.NODE_ENV === 'production'
 
-const nextConfig = {
+/**
+ * `next dev` and `next build` are given separate output directories so the two
+ * can run at the same time.
+ *
+ * They originally shared `.next`, which meant a build during development deleted
+ * the dev chunk files an open browser was still requesting; the page died with
+ * "ChunkLoadError: Loading chunk … failed" and scripts/stylesheets refused for
+ * being served as `text/plain` (Next answers a missing chunk with its not-found
+ * response). Keeping the directories apart removes the conflict rather than
+ * policing it, and lets the verify gate run without stopping the dev server.
+ *
+ *   next dev              -> .next/        (development output)
+ *   next build / start    -> .next-build/  (production output)
+ *
+ * The phase is the reliable signal here: it is what Next passes to the config in
+ * each mode, unlike NODE_ENV, which the environment can override.
+ */
+const distDir = (phase) => (phase === PHASE_DEVELOPMENT_SERVER ? '.next' : '.next-build')
+
+const nextConfig = (phase) => ({
+  distDir: distDir(phase),
   reactStrictMode: true,
   poweredByHeader: false,
   async headers() {
@@ -52,6 +79,6 @@ const nextConfig = {
       },
     ]
   },
-}
+})
 
 module.exports = nextConfig

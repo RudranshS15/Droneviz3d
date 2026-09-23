@@ -1,8 +1,10 @@
 # Dependencies
 node_modules/
 
-# Build output
+# Build output. `next dev` writes .next/, `next build`/`start` write .next-build/
+# so the two can run at the same time (see next.config.js).
 .next/
+.next-build/
 out/
 build/
 
@@ -42,6 +44,12 @@ screenshots/
 
 # TypeScript build info
 tsconfig.tsbuildinfo
+
+# Next regenerates this on every dev/build, pointing at whichever output
+# directory that command uses (.next or .next-build), so tracking it would make
+# the working tree dirty depending on the last command run. Next's own guidance
+# is that the file is not to be edited.
+next-env.d.ts
 
 # Coverage / CI noise
 coverage/
