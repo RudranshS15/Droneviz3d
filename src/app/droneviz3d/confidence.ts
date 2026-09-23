@@ -29,21 +29,25 @@ export interface ConfidenceBand {
   description: string
 }
 
+// The descriptions describe the *ranking*, not a diagnosis. The score behind a
+// band is the detection heuristic plus a corroboration bonus, so it says which
+// points to trust most relative to each other — it is not a probability that a
+// point is correct, and it does not identify why a point scored low.
 export const CONFIDENCE_BANDS: readonly ConfidenceBand[] = [
   {
     id: 'high', label: 'High', min: 0.8, maxExclusive: Infinity, rgb: [34, 211, 238],
     barClass: 'bg-cyan-400', textClass: 'text-cyan-300',
-    description: 'seen from several keyframes with consistent geometry',
+    description: 'top-ranked — several keyframes contributed to this object',
   },
   {
     id: 'medium', label: 'Medium', min: 0.5, maxExclusive: 0.8, rgb: [251, 191, 36],
     barClass: 'bg-amber-400', textClass: 'text-amber-300',
-    description: 'single observation or a partially occluded view',
+    description: 'mid-ranked — fewer contributing observations',
   },
   {
     id: 'low', label: 'Low', min: 0, maxExclusive: 0.5, rgb: [248, 113, 113],
     barClass: 'bg-red-400', textClass: 'text-red-300',
-    description: 'weak grounding at this location — treat as indicative only',
+    description: 'lowest-ranked — treat as indicative only',
   },
 ]
 

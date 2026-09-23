@@ -39,7 +39,8 @@ function metricsFixture() {
   return {
     totalPoints: '12,142', accuracy: 'n/a (single pass)', processingTime: 'client-side demo',
     coverage: '85.7%', confidenceScore: '0.71', groundedObjects: '49',
-    groundedLabels: 'building, vehicle', keyframesSampled: '24', provenance: 'test provenance',
+    groundedLabels: 'building, vehicle', keyframesSampled: '24',
+    groundingSource: 'LocateAnything-3B worker', synthesis: 'test synthesis note', provenance: 'test provenance',
   }
 }
 
@@ -143,7 +144,7 @@ test('a model written by one visit is restored by a later visit to the same brow
   first.getState().completeProcessingWith({
     points: cloudOf(4), trajectory: [], annotations: [], metrics: metricsFixture(),
     bounds: { minLat: 1, minLng: 2, maxLat: 3, maxLng: 4 },
-    trackedObjects: [], projectedDetections: [],
+    trackedObjects: [], projectedDetections: [], groundingSource: 'simulated' as const,
   })
   assert.equal(first.getState().restoredFromStorage, false, 'the visit that ran the pipeline is not a restore')
 
@@ -171,7 +172,7 @@ test('a draft in progress is never stored, so the entry means "a model exists"',
   store.getState().completeProcessingWith({
     points: cloudOf(2), trajectory: [], annotations: [], metrics: metricsFixture(),
     bounds: { minLat: 1, minLng: 2, maxLat: 3, maxLng: 4 },
-    trackedObjects: [], projectedDetections: [],
+    trackedObjects: [], projectedDetections: [], groundingSource: 'simulated' as const,
   })
   assert.equal(storage.dump().has(KEY), true)
 })
@@ -182,7 +183,7 @@ test('Reset deletes the stored model instead of leaving a copy behind', () => {
   store.getState().completeProcessingWith({
     points: cloudOf(3), trajectory: [], annotations: [], metrics: metricsFixture(),
     bounds: { minLat: 1, minLng: 2, maxLat: 3, maxLng: 4 },
-    trackedObjects: [], projectedDetections: [],
+    trackedObjects: [], projectedDetections: [], groundingSource: 'simulated' as const,
   })
   assert.ok(storage.dump().has(KEY), 'precondition: there is something stored to erase')
 
@@ -240,7 +241,7 @@ test('what gets persisted is only the finished model', () => {
   store.getState().completeProcessingWith({
     points: cloudOf(3), trajectory: [], annotations: [], metrics: metricsFixture(),
     bounds: { minLat: 1, minLng: 2, maxLat: 3, maxLng: 4 },
-    trackedObjects: [], projectedDetections: [],
+    trackedObjects: [], projectedDetections: [], groundingSource: 'simulated' as const,
   })
 
   const raw = storage.getItem(KEY)

@@ -22,7 +22,8 @@ const POINTS: Point3D[] = [
 const METRICS: ReconstructionMetrics = {
   totalPoints: '2', accuracy: 'n/a (single pass)', processingTime: 'client-side demo',
   coverage: '80.0%', confidenceScore: '0.63', groundedObjects: '1',
-  groundedLabels: 'building', keyframesSampled: '24', provenance: 'test',
+  groundedLabels: 'building', keyframesSampled: '24',
+  groundingSource: 'LocateAnything-3B worker', synthesis: 'test synthesis note', provenance: 'test',
 }
 
 function payload(origin: { lat: number; lng: number } | null): ExportPayload {
@@ -41,19 +42,35 @@ test('PLY declares one vertex per point with colour + confidence', async () => {
   assert.equal(vertexRows.length, POINTS.length)
 })
 
-test('OBJ converts ENU to Y-up (x, z, −y) for mesh viewers', async () => {
+test('OBJ converts ENU to Y-up (east, up, −north) and says so', async () => {
   const text = await toObj(payload(null)).text()
   const vertices = text.split('\n').filter((l) => l.startsWith('v '))
   assert.equal(vertices.length, POINTS.length)
   assert.equal(vertices[0], 'v 1.000 3.000 -2.000 10 20 30')
-  assert.ok(text.includes('x=East, y=North, z=Up'), 'the frame convention is documented in the file')
+  // The header must describe the *conversion*, not claim the file is ENU z-up.
+  assert.ok(text.includes('Y-up'), 'the up-axis convention is documented in the file')
+  assert.ok(text.includes('East, Up, -North'), 'and so is the axis mapping')
+  assert.ok(!/z=Up/.test(text), 'the earlier header contradicted its own vertices')
+})
+
+test('OBJ round-trips: written (x, y, z) map back to ENU (east, north, up)', async () => {
+  const text = await toObj(payload(null)).text()
+  const first = text.split('\n').find((l) => l.startsWith('v '))!.split(' ').map(Number)
+  // written.x = east, written.y = up, written.z = -north
+  const [east, up, negNorth] = first.slice(1, 4)
+  assert.equal(east, POINTS[0].x)
+  assert.equal(up, POINTS[0].z)
+  assert.equal(-negNorth, POINTS[0].y)
 })
 
 test('georeferenced CSV round-trips local ENU back to WGS84', async () => {
   const origin = { lat: 28.6139, lng: 77.209 }
   const text = await toGeoCsv(payload(origin)).text()
   const rows = text.trim().split('\n')
-  assert.equal(rows[0], 'lat,lng,altitude_m,east_m,north_m,label_confidence,r,g,b')
+  // The vertical column is named for what it is: height above the local origin's
+  // ground plane, not absolute altitude (no geoid, no datum).
+  assert.equal(rows[0], 'lat,lng,local_up_m,east_m,north_m,label_confidence,r,g,b')
+  assert.ok(!rows[0].includes('altitude'), 'local height must not be labelled altitude')
   assert.equal(rows.length, POINTS.length + 1)
 
   const [lat0, lng0, alt0, east0, north0] = rows[1].split(',')

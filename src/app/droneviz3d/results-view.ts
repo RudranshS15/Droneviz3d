@@ -38,10 +38,18 @@ export interface StatusInput {
   pointCount: number
   objectCount: number
   restoredFromStorage: boolean
+  /**
+   * `metrics.groundingSource` when known. A run whose detections came from the
+   * simulated adapter must not be described as a LocateAnything-3B run.
+   */
+  groundingSource?: string
 }
 
 export function deriveReconstructionStatus(input: StatusInput): ReconstructionStatus {
   const { processingComplete, isProcessing, hasMetrics, pointCount, objectCount, restoredFromStorage } = input
+  // A simulated run is stated as simulated; the model's name is used only when
+  // the model actually produced the detections.
+  const realModel = !input.groundingSource ? null : /locateanything/i.test(input.groundingSource)
   const objects = `${objectCount} grounded object${objectCount === 1 ? '' : 's'}`
   const points = `${pointCount.toLocaleString()} points`
 
@@ -85,10 +93,13 @@ export function deriveReconstructionStatus(input: StatusInput): ReconstructionSt
     }
   }
 
+  const origin = realModel === false
+    ? 'Generated from simulated detections and your flight metadata — no LocateAnything-3B model was run for this result.'
+    : 'Generated from LocateAnything-3B detections projected through your flight metadata.'
   return {
-    id: 'complete', tone: 'success', canExport: true,
+    id: 'complete', tone: realModel === false ? 'warning' : 'success', canExport: true,
     title: `Reconstruction complete — ${points}, ${objects}`,
-    detail: 'Generated from LocateAnything-3B detections projected through your flight metadata. Fine surface detail between detected objects is synthesized.',
+    detail: `${origin} Object heights and all surface detail between detected objects are synthesized estimates, so treat this as an illustrative scene rather than a measured reconstruction.`,
   }
 }
 
@@ -148,6 +159,14 @@ export function buildMetricGroups(input: MetricInput): MetricGroups {
       value: metrics.keyframesSampled ?? 'n/a',
       note: 'frames sent to the grounding model for this pass',
     },
+    {
+      id: 'groundingSource', label: 'Detections from',
+      // Persisted metrics from an earlier session may predate this field.
+      value: metrics.groundingSource ?? 'unknown source',
+      note: metrics.groundingSource && /simulated/i.test(metrics.groundingSource)
+        ? 'no model was run — the scene shown is illustrative, not observed'
+        : 'the LocateAnything-3B worker produced these detections',
+    },
   ]
 
   const estimated: MetricEntry[] = [
@@ -157,14 +176,14 @@ export function buildMetricGroups(input: MetricInput): MetricGroups {
       note: 'density between detections is synthesized, not measured',
     },
     {
-      id: 'confidence', label: 'Mean point confidence',
+      id: 'confidence', label: 'Mean detection-quality weight',
       value: metrics.confidenceScore,
-      note: 'weighted sample confidence — not a calibrated accuracy',
+      note: 'heuristic ranking from box regularity + corroboration — not a calibrated probability or an accuracy',
     },
     {
-      id: 'coverage', label: 'Coverage estimate',
+      id: 'coverage', label: 'Coverage',
       value: metrics.coverage,
-      note: 'heuristic share of the detected corridor',
+      note: 'share of the modelled area occupied by observed object footprints (overlaps counted once)',
     },
     {
       id: 'accuracy', label: 'Survey accuracy',

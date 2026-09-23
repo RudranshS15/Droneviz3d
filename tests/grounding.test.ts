@@ -14,7 +14,7 @@ import {
   createSimulatedLocateAnythingAdapter, deduplicateDetections, groundSampleDistance,
   parseLocateAnythingOutput, planKeyframes, projectBoxToGround,
 } from '../src/app/droneviz3d/grounding'
-import { CameraModel, FlightParams, deg2rad, poseAt } from '../src/app/droneviz3d/geometry'
+import { CameraModel, FlightParams, cameraFov, deg2rad, poseAt } from '../src/app/droneviz3d/geometry'
 
 const LABELS = ['building', 'vehicle', 'tree'] as const
 const CAM: CameraModel = { focal35: 24, frameWidth: 3840, frameHeight: 2160 }
@@ -95,8 +95,14 @@ test('groundSampleDistance is finite and positive for a downward gimbal', () => 
   const pose = poseAt({ ...baseFlight() }, 0, 0)
   const gsd = groundSampleDistance(pose, CAM, 0.5)
   assert.ok(Number.isFinite(gsd) && gsd > 0)
-  // vfov 53.13° at 120 m altitude: the vertical frame spans ~124 m ⇒ ~0.0575 m/px.
-  assert.ok(Math.abs(gsd - 0.0575) < 0.001, `expected ~0.0575 m/px, got ${gsd}`)
+  // CAM is 3840×2160 (16:9) at a 24 mm equivalent. Its *vertical* FOV is 47.7°,
+  // not the 53.1° a 3:2 full-frame sensor would give, because cameraFov spreads
+  // the equivalent diagonal over the frame's real aspect ratio. At 120 m the
+  // vertical frame spans ~109.8 m over 2160 px ⇒ ~0.0508 m/px.
+  const vfov = cameraFov(CAM).vfov
+  const expected = ((120 / -Math.sin(pose.pitch)) * 2 * Math.tan(vfov / 2)) / CAM.frameHeight
+  assert.ok(Math.abs(gsd - 0.0508) < 0.001, `expected ~0.0508 m/px, got ${gsd}`)
+  assert.ok(Math.abs(gsd - expected) < 1e-9, 'and it must follow from the camera model itself')
 })
 
 test('groundSampleDistance is Infinity for a ray at the horizon', () => {

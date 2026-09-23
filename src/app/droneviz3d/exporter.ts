@@ -5,6 +5,16 @@
  * offered: PLY (point cloud), OBJ (vertices), and CSV (georeferenced table).
  * Survey-grade formats that require a real photogrammetry backend (GeoTIFF
  * orthophoto, DEM, LAS) are intentionally NOT offered, so every download is honest.
+ *
+ * Two conventions matter to anyone importing these files, and each is stated in
+ * the file header itself rather than only here:
+ *
+ *   - PLY and CSV are written in the internal ENU frame (x = East, y = North,
+ *     z = Up, metres). OBJ is written Y-up for conventional mesh viewers, which
+ *     means its axes are a *conversion*, not ENU — see `toObj`.
+ *   - Vertical values are heights above the local origin's ground plane. The
+ *     origin is the GPS point the user entered, so there is no absolute vertical
+ *     datum and no geoid correction; the CSV column says so in its name.
  */
 
 import { Point3D, ReconstructionPose, ReconstructionMetrics } from './reconstruct'
@@ -47,11 +57,24 @@ export function toPly(payload: ExportPayload): Blob {
   return toBlob(lines.join('\n'), 'application/octet-stream')
 }
 
-/** OBJ with vertices + per-vertex colors as extension (x y z r g b). */
+/**
+ * OBJ with vertices + per-vertex colors as extension (x y z r g b).
+ *
+ * OBJ has no up-axis metadata, and the convention every mesh viewer assumes is
+ * Y-up, so the internal ENU frame is converted on the way out:
+ *
+ *     written.x = east,  written.y = up,  written.z = -north
+ *
+ * The previous header claimed the file was ENU z-up while the vertices were
+ * already converted, so an importer that trusted the header would lay the model
+ * on its side. Both the direction of the axes and the conversion are documented
+ * here and in the header lines below.
+ */
 export function toObj(payload: ExportPayload): Blob {
   const lines: string[] = [
     '# DroneViz3D reconstruction (LocateAnything-3B grounded demo)',
-    '# Local ENU frame: x=East, y=North, z=Up, meters',
+    '# Y-up for mesh viewers: written (x, y, z) = ENU (East, Up, -North), metres',
+    '# Convert back to ENU with east = x, north = -z, up = y',
   ]
   for (const p of payload.points) {
     lines.push(`v ${p.x.toFixed(3)} ${p.z.toFixed(3)} ${(-p.y).toFixed(3)} ${p.r} ${p.g} ${p.b}`)
@@ -59,11 +82,18 @@ export function toObj(payload: ExportPayload): Blob {
   return toBlob(lines.join('\n'), 'application/octet-stream')
 }
 
-/** Georeferenced CSV: every point with WGS84 coordinates and confidence. */
+/**
+ * Georeferenced CSV: every point with WGS84 coordinates and confidence.
+ *
+ * The vertical column is `local_up_m`, not `altitude_m`: it is metres above the
+ * local origin's ground plane (the user-supplied GPS point), with no absolute
+ * datum and no geoid model. Calling it altitude invited readers to treat it as
+ * height above sea level, which this pipeline cannot know.
+ */
 export function toGeoCsv(payload: ExportPayload): Blob {
   const { points, origin } = payload
   if (!origin) return toBlob('error,no origin\n', 'text/csv')
-  const lines: string[] = ['lat,lng,altitude_m,east_m,north_m,label_confidence,r,g,b']
+  const lines: string[] = ['lat,lng,local_up_m,east_m,north_m,label_confidence,r,g,b']
   const M_PER_DEG_LAT = 111320
   const mPerDegLng = M_PER_DEG_LAT * Math.max(0.01, Math.cos((origin.lat * Math.PI) / 180))
   for (const p of points) {

@@ -94,16 +94,38 @@ test('poseAt carries yaw, gimbal pitch and timing', () => {
 
 // ---------- Camera model ----------
 
-test('cameraFov matches the 35mm full-frame pinhole model', () => {
+test('cameraFov preserves the full-frame diagonal and honours the frame aspect ratio', () => {
+  // focal35 is a 35mm *equivalent* focal length, so the diagonal angle of view
+  // must match a 36×24 mm frame at that focal length, distributed over the real
+  // aspect ratio. 3840×2160 is 16:9, not the 3:2 of full frame.
+  const diag = Math.hypot(36, 24)
+  const aspect = 3840 / 2160
+  const sensorW = diag / Math.sqrt(1 + 1 / (aspect * aspect))
+  const sensorH = sensorW / aspect
   const { hfov, vfov } = cameraFov(CAM)
-  assert.ok(Math.abs(hfov - 2 * Math.atan(36 / 48)) < 1e-12)
-  assert.ok(Math.abs(vfov - 2 * Math.atan(24 / 48)) < 1e-12)
+  assert.ok(Math.abs(hfov - 2 * Math.atan(sensorW / (2 * 24))) < 1e-12)
+  assert.ok(Math.abs(vfov - 2 * Math.atan(sensorH / (2 * 24))) < 1e-12)
   assert.ok(hfov > vfov, 'landscape sensor ⇒ wider horizontal FOV')
+  // The diagonal angle of view is exactly what 35mm-equivalence preserves.
+  assert.ok(Math.abs(Math.hypot(sensorW, sensorH) - diag) < 1e-9)
 })
 
-test('cameraFov never divides by a zero focal length', () => {
+test('cameraFov responds to the frame aspect ratio instead of ignoring it', () => {
+  const wide = cameraFov({ focal35: 24, frameWidth: 3840, frameHeight: 2160 })
+  const square = cameraFov({ focal35: 24, frameWidth: 2000, frameHeight: 2000 })
+  const tall = cameraFov({ focal35: 24, frameWidth: 1080, frameHeight: 1920 })
+  assert.ok(wide.hfov > square.hfov && square.hfov > tall.hfov, 'a wider frame must widen the horizontal FOV')
+  assert.ok(wide.vfov < square.vfov && square.vfov < tall.vfov, 'and narrow the vertical FOV')
+  // Same diagonal field of view regardless of how it is cropped.
+  const diagOf = (f: { hfov: number; vfov: number }) => Math.hypot(Math.tan(f.hfov / 2), Math.tan(f.vfov / 2))
+  assert.ok(Math.abs(diagOf(wide) - diagOf(tall)) < 1e-9)
+})
+
+test('cameraFov never divides by a zero focal length and survives a bad frame size', () => {
   const { hfov } = cameraFov({ ...CAM, focal35: 0 })
   assert.ok(Number.isFinite(hfov))
+  const broken = cameraFov({ focal35: 24, frameWidth: 0, frameHeight: Number.NaN })
+  assert.ok(Number.isFinite(broken.hfov) && Number.isFinite(broken.vfov), 'a unusable frame falls back, never NaN')
 })
 
 test('rayThroughImagePoint: image centre is the camera forward axis', () => {

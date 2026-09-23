@@ -37,7 +37,12 @@ export interface GroundingBox {
   x1: number; y1: number; x2: number; y2: number
   /** keyframe this detection came from */
   keyframeIndex: number
-  /** 0..1 — heuristic score derived from box regularity + label match */
+  /**
+   * 0..1 detection-quality *heuristic* (box regularity + label membership) —
+   * NOT a calibrated probability and NOT positional accuracy. When the real
+   * worker reports token logprobs, prefer those; until then this is a ranking
+   * device, and the UI labels it as a heuristic rather than as confidence.
+   */
   score: number
 }
 
@@ -82,7 +87,7 @@ export function parseLocateAnythingOutput(
     if (nx2 - nx1 < 0.002 || ny2 - ny1 < 0.002) continue // degenerate box
     boxes.push({
       label, x1: nx1, y1: ny1, x2: nx2, y2: ny2, keyframeIndex,
-      score: boxScore(nx2 - nx1, ny2 - ny1, label, labels),
+      score: boxQualityHeuristic(nx2 - nx1, ny2 - ny1, label, labels),
     })
   }
 
@@ -102,11 +107,16 @@ function clamp01(v: number): number {
 }
 
 /**
- * Heuristic detection score. Real deployments should replace this with the
- * model's native token logprobs (available from the worker answer payload).
- * Penalizes extreme aspect ratios and labels that were not requested.
+ * Detection-quality heuristic, a ranking device — not a probability.
+ *
+ * Every detection starts at 0.9 and is nudged down for an implausible aspect
+ * ratio or a label that was not requested, so the spread is roughly 0.8–0.9 and
+ * says nothing about how likely the box is to be correct. Named to keep that
+ * obvious at the call site. Replace with the model's native token logprobs
+ * (present in the worker answer payload) before treating any of this as
+ * confidence.
  */
-function boxScore(w: number, h: number, label: string, labels: readonly string[]): number {
+function boxQualityHeuristic(w: number, h: number, label: string, labels: readonly string[]): number {
   const aspect = w / Math.max(h, 1e-6)
   const aspectPenalty = aspect > 8 || aspect < 1 / 8 ? 0.15 : 0
   const labelPenalty = labels.length > 0 && !labels.includes(label) ? 0.1 : 0

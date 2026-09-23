@@ -89,9 +89,18 @@ export interface CameraPoseLocal {
 /**
  * Single-pass trajectory: a straight line at constant ground speed and altitude,
  * starting at the GPS reference point, oriented along `heading`.
- * `ASSUMED_GIMBAL_PITCH` is the documented fallback when the flight log has no
- * gimbal telemetry (most single-file uploads do not).
+ *
+ * ASSUMED, NOT RECOVERED. This is a model of the flight, built from five scalars
+ * (start point, altitude, speed, heading, duration) — it is not a trajectory
+ * recovered from the video or from a flight log. Turns, hovering, altitude
+ * changes and camera rotation all invalidate it, and `ASSUMED_GIMBAL_PITCH`
+ * below stands in for gimbal telemetry that a single-file upload does not carry.
+ * The UI labels the drawn path "assumed" for this reason; recovering the real
+ * path needs time-aligned telemetry and calibrated camera poses.
  */
+export const TRAJECTORY_ASSUMED = true
+
+/** Documented fallback when the flight log has no gimbal telemetry. */
 export const ASSUMED_GIMBAL_PITCH = -75 // degrees from horizon
 
 export function poseAt(flight: FlightParams, t: number, frameIndex = 0): CameraPoseLocal {
@@ -125,12 +134,37 @@ export interface CameraModel {
 
 export const FULL_FRAME_WIDTH_MM = 36
 export const FULL_FRAME_HEIGHT_MM = 24
+/** Full-frame diagonal, mm — the quantity a 35mm-equivalent focal length preserves. */
+export const FULL_FRAME_DIAGONAL_MM = Math.hypot(FULL_FRAME_WIDTH_MM, FULL_FRAME_HEIGHT_MM)
 
-/** Horizontal / vertical field of view, assuming a 35mm full-frame equivalent. */
+/**
+ * Horizontal / vertical field of view for the camera, in radians.
+ *
+ * The convention: `focal35` is a 35mm *equivalent* focal length, so it preserves
+ * the diagonal angle of view of a full-frame (36×24 mm) sensor. That diagonal is
+ * then spread over the frame's real aspect ratio — a 16:9 frame is wider and
+ * shorter than 3:2, so its horizontal FOV is larger and its vertical FOV smaller
+ * for the same focal length.
+ *
+ * The previous version hard-coded 36×24 mm for both axes, which ignored
+ * `frameWidth` / `frameHeight` entirely: a 3840×2160 upload was modelled as a
+ * 3:2 sensor, so every ray through a corner of the frame was off. A calibrated
+ * camera (fx, fy, cx, cy + distortion) would be better still; the UI collects a
+ * 35mm-equivalent focal length, so this is the correct conversion for that input.
+ */
 export function cameraFov(cam: CameraModel): { hfov: number; vfov: number } {
-  const hfov = 2 * Math.atan(FULL_FRAME_WIDTH_MM / (2 * Math.max(1, cam.focal35)))
-  const vfov = 2 * Math.atan(FULL_FRAME_HEIGHT_MM / (2 * Math.max(1, cam.focal35)))
-  return { hfov, vfov }
+  const f = Math.max(1, cam.focal35)
+  const w = cam.frameWidth
+  const h = cam.frameHeight
+  // Fall back to the 3:2 full-frame aspect when the frame size is unusable, so a
+  // bad input degrades to the old behaviour instead of producing NaN angles.
+  const aspect = Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : FULL_FRAME_WIDTH_MM / FULL_FRAME_HEIGHT_MM
+  const sensorW = FULL_FRAME_DIAGONAL_MM / Math.sqrt(1 + 1 / (aspect * aspect))
+  const sensorH = sensorW / aspect
+  return {
+    hfov: 2 * Math.atan(sensorW / (2 * f)),
+    vfov: 2 * Math.atan(sensorH / (2 * f)),
+  }
 }
 
 export interface Vec3 { x: number; y: number; z: number }

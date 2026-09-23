@@ -8,17 +8,22 @@
  */
 
 // Step Definitions (must come first for StepId inference)
+//
+// Every stage listed here is one the pipeline actually performs. There is
+// deliberately no mesh/triangulation stage and no glTF or GeoTIFF output: the
+// pipeline synthesizes a point cloud only, and exporter.ts can serialize it as
+// PLY, OBJ or CSV. Naming a stage the code does not run is how a demo starts
+// describing artifacts that were never generated.
 export const STEP_DEFINITIONS = [
   { id: 'extract', name: 'Frame Extraction', detail: 'Sampling keyframes along the single flight pass', tool: 'Keyframe planner' },
   { id: 'grounding', name: 'Semantic Grounding', detail: 'LocateAnything-3B grounding of buildings, vehicles, trees per keyframe', tool: 'LocateAnything-3B (PBD)' },
   { id: 'projection', name: 'Ground Projection', detail: 'Projecting detected boxes to world coordinates via camera model', tool: 'Pinhole + ENU' },
   { id: 'tracking', name: 'Multi-view Tracking', detail: 'Deduplicating detections across keyframes with score fusion', tool: 'Corroboration fusion' },
-  { id: 'heightfield', name: 'Height Field', detail: 'Rasterizing grounded objects into a georeferenced height field', tool: '1.5 m grid' },
-  { id: 'pointcloud', name: 'Point Cloud Generation', detail: 'Synthesizing classified, confidence-weighted 3D points', tool: 'Height-field sampling' },
-  { id: 'mesh', name: 'Mesh Reconstruction', detail: 'Triangulating surfaces and filling gaps between objects', tool: 'Grid triangulation' },
-  { id: 'confidence', name: 'Confidence Scoring', detail: 'Per-point reliability from grounding score + corroboration', tool: 'Score fusion' },
+  { id: 'heightfield', name: 'Height Field', detail: 'Rasterizing grounded objects into an illustrative height field', tool: '1.5 m grid' },
+  { id: 'pointcloud', name: 'Point Cloud Generation', detail: 'Sampling classified 3D points from the height field (surface detail synthesized)', tool: 'Height-field sampling' },
+  { id: 'confidence', name: 'Confidence Scoring', detail: 'Per-point weight from the detection heuristic + corroboration — not a calibrated probability', tool: 'Heuristic fusion' },
   { id: 'georef', name: 'Georeferencing', detail: 'Mapping local ENU coordinates to WGS84 lat/lng', tool: 'Equirectangular' },
-  { id: 'export', name: 'Export & Package', detail: 'Generating OBJ/PLY/GLTF + orthophoto', tool: 'glTF + GeoTIFF' },
+  { id: 'export', name: 'Export & Package', detail: 'Packaging client-side PLY / OBJ / CSV downloads', tool: 'Client-side exporters' },
 ] as const
 
 // Types
@@ -72,7 +77,7 @@ export function createDemoAdapter(): PipelineAdapter {
   }
 }
 
-export const DEFAULT_DURATIONS = [800, 1400, 900, 1000, 1100, 1600, 1300, 900, 900, 800]
+export const DEFAULT_DURATIONS = [800, 1400, 900, 1000, 1100, 1600, 900, 900, 800]
 
 export function createInitialSteps(): PipelineStep[] {
   return STEP_DEFINITIONS.map((def) => ({

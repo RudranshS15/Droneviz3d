@@ -24,7 +24,9 @@ const METRICS: ReconstructionMetrics = {
   groundedObjects: '49',
   groundedLabels: 'building, vehicle',
   keyframesSampled: '24',
-  provenance: 'Reconstructed from LocateAnything-3B detections + flight metadata (demo synthesis)',
+  groundingSource: 'LocateAnything-3B worker',
+  synthesis: 'test synthesis note',
+  provenance: 'Detections from LocateAnything-3B; geometry synthesised from them + flight metadata',
 }
 
 function status(overrides: Partial<StatusInput> = {}) {

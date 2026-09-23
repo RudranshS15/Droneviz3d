@@ -14,7 +14,7 @@
  */
 
 import {
-  CameraModel, FlightParams, hashString, mulberry32, poseAt, poseToLngLat,
+  CameraModel, FlightParams, hashString, localToLngLat, mulberry32, poseAt, poseToLngLat,
 } from './geometry'
 import {
   GroundingResponse, KeyframePlan, ProjectedDetection, TrackedObject,
@@ -29,9 +29,14 @@ export interface Point3D {
 }
 
 /**
- * Colour of the drone-track markers embedded in the point cloud. It is a
- * protocol between the renderer and the pipeline: the viewer pulls these points
- * out of the cloud and draws them as a flight path instead of loose points.
+ * Colour of the drone-track markers.
+ *
+ * The pipeline no longer embeds markers in the point cloud: the flight path is
+ * exported separately as `trajectory` and the viewer draws it from those poses.
+ * Embedding them used to inflate point counts, skew mean confidence (each marker
+ * claimed 0.95) and write drone positions into every download as if they were
+ * scene geometry. The colour and predicate are kept so a model persisted by an
+ * older version is still split back out correctly by scene.ts.
  * No class colour in CLASS_COLORS collides with it.
  */
 export const TRAJECTORY_RGB = { r: 60, g: 150, b: 220 } as const
@@ -46,7 +51,15 @@ export interface ReconstructionPose {
   timeOffset: number; frameIndex: number
 }
 
+/**
+ * Why an observation scored low. The pipeline currently measures none of the
+ * specific conditions below, so every annotation it emits carries `'unknown'`.
+ * The named causes are kept as the vocabulary a real detector or telemetry check
+ * would report once one exists — assigning them by array position (which an
+ * earlier version did) fabricated an explanation for every low-confidence object.
+ */
 export type ConfidenceCause =
+  | 'unknown'
   | 'occlusion' | 'motion_blur' | 'low_parallax' | 'dynamic_object' | 'lighting' | 'gps_noise'
 
 export interface ConfidenceAnnotation {
@@ -67,6 +80,14 @@ export interface ReconstructionMetrics {
   groundedLabels: string
   /** how many keyframes were sampled for grounding (a measured input) */
   keyframesSampled: string
+  /** where the detections came from — the model, or the simulated adapter */
+  groundingSource: string
+  /**
+   * One sentence naming what was measured and what was synthesized, so no
+   * consumer has to infer it from the geometry. Object positions and extents
+   * come from detections; object *heights* and the surface between them do not.
+   */
+  synthesis: string
   provenance: string
 }
 
@@ -77,12 +98,21 @@ export interface ReconstructionResult {
   metrics: ReconstructionMetrics
   /** georeferenced bounds for the UI */
   bounds: { minLat: number; minLng: number; maxLat: number; maxLng: number }
+  /**
+   * Which grounding backend actually produced the detections behind this model.
+   * Inferred from the responses themselves, so a worker failure that fell back
+   * to the simulated adapter can never be presented as a real run.
+   */
+  groundingSource: GroundingSource
 }
+
+/** Where the detections that drive the reconstruction came from. */
+export type GroundingSource = 'locateanything-3b' | 'simulated'
 
 // ---------- Height field from tracked objects ----------
 
-interface HeightCell {
-  /** max height in meters at this cell */
+export interface HeightCell {
+  /** max height in meters at this cell — a class prior, not a measurement */
   h: number
   label: string
   score: number
@@ -92,8 +122,24 @@ interface HeightCell {
  * Rasterize tracked objects into a height field: buildings become extruded
  * blocks, vehicles low pads, trees medium domes. Cell size ~1.5 m keeps memory
  * bounded while resolving typical building footprints.
+ *
+ * IMPORTANT — the heights are not measured. A single nadir-ish pass with no
+ * stereo overlap cannot recover an object's height, so each class is given a
+ * plausible prior (`CLASS_HEIGHT_PRIOR`) plus seeded jitter only to keep the
+ * silhouette from looking like a stamped grid. The footprint (where the object
+ * is, and how wide) comes from the detections; the vertical extent is
+ * illustrative. Do not present these heights as observed geometry.
  */
-function buildHeightField(tracked: TrackedObject[], extent: number, seed: number): Map<string, HeightCell> {
+export const CLASS_HEIGHT_PRIOR: Record<string, { base: number; jitter: number }> = {
+  building: { base: 6, jitter: 14 },
+  vehicle: { base: 1.5, jitter: 0 },
+  tree: { base: 3, jitter: 4 },
+}
+
+/** One sentence, shown in the UI and written into exports, naming the synthesis. */
+export const SYNTHESIS_NOTE =
+  'Object footprints and positions are projected from detections; object heights and all surface points between objects are synthesized class-based estimates, not measured geometry.'
+export function buildHeightField(tracked: TrackedObject[], extent: number, seed: number): Map<string, HeightCell> {
   const rand = mulberry32(seed ^ 0x9e3779b9)
   const CELL = 1.5
   const cells = new Map<string, HeightCell>()
@@ -108,7 +154,9 @@ function buildHeightField(tracked: TrackedObject[], extent: number, seed: number
   for (const t of tracked) {
     const isBuilding = t.label === 'building'
     const isTree = t.label === 'tree'
-    const baseH = isBuilding ? 6 + rand() * 14 : isTree ? 3 + rand() * 4 : 1.5
+    // Class prior, not a measurement — see CLASS_HEIGHT_PRIOR above.
+    const prior = CLASS_HEIGHT_PRIOR[t.label] ?? CLASS_HEIGHT_PRIOR.vehicle
+    const baseH = prior.base + rand() * prior.jitter
     const jitter = 0.15
     for (let x = t.center.x - t.halfExtentX; x <= t.center.x + t.halfExtentX; x += CELL) {
       for (let y = t.center.y - t.halfExtentY; y <= t.center.y + t.halfExtentY; y += CELL) {
@@ -163,7 +211,6 @@ function synthesizePointCloud(
   cells: Map<string, HeightCell>,
   tracked: TrackedObject[],
   flight: FlightParams,
-  cam: CameraModel,
   seed: number
 ): Point3D[] {
   const rand = mulberry32(seed ^ 0x51ed270b)
@@ -203,19 +250,32 @@ function synthesizePointCloud(
     }
   }
 
-  // 3. Camera trajectory as sparse elevated markers (drone path). The viewer
-  //    identifies these by colour so it can draw them as a path layer instead
-  //    of loose points — keep TRAJECTORY_RGB the single source for that key.
-  for (let i = 0; i <= 60; i++) {
-    const pose = poseAt(flight, i / 60, i)
-    points.push({
-      x: pose.x, y: pose.y, z: pose.z,
-      ...TRAJECTORY_RGB,
-      confidence: 0.95,
-    })
-  }
-
+  // 3. No drone-track markers here. The flight path is a separate layer built
+  //    from `trajectory` poses (see scene.ts) because a marker is not scene
+  //    geometry: including it inflated totalPoints, pulled mean confidence up
+  //    toward 0.95 and put drone coordinates into PLY/OBJ/CSV exports.
   return points
+}
+
+/**
+ * Share of the defined reconstruction area covered by observed object
+ * footprints, 0..1. Counts distinct height-field cells (1.5 m) so overlapping
+ * footprints are not double-counted — two detections of the same building do not
+ * claim twice the area.
+ *
+ * `extent` is the side length (metres) of the square modelled area. An area
+ * share is a defensible statement; the value this replaced divided the object
+ * *count* by a constant and printed it as a percentage without multiplying by
+ * 100, so twelve objects displayed as "0.6%".
+ */
+export const HEIGHT_CELL_M = 1.5
+
+export function footprintCoverage(
+  cells: ReadonlyMap<string, unknown>,
+  extent: number
+): number {
+  if (!Number.isFinite(extent) || extent <= 0) return 0
+  return Math.min(1, (cells.size * HEIGHT_CELL_M * HEIGHT_CELL_M) / (extent * extent))
 }
 
 /** Half-extent of the reconstructed area: covers all detections plus the flight corridor. */
@@ -248,29 +308,27 @@ function buildTrajectory(flight: FlightParams, count = 40): ReconstructionPose[]
 
 // ---------- Confidence annotations ----------
 
+/**
+ * Flag the objects the pipeline is least sure about. The *selection* is real —
+ * it is the lowest-scoring fused objects — but the *reason* is not diagnosed:
+ * nothing here measures occlusion, parallax, blur, lighting, object motion or
+ * telemetry quality. So every annotation says `'unknown'` and states the one
+ * thing that is actually known about it (how many keyframes saw it). An earlier
+ * version cycled through six plausible-sounding causes by array position, which
+ * read as a diagnosis while measuring nothing.
+ */
 function buildAnnotations(
   tracked: TrackedObject[],
   flight: FlightParams,
-  keyframeCount: number,
-  seed: number
+  keyframeCount: number
 ): ConfidenceAnnotation[] {
-  const rand = mulberry32(seed ^ 0x2545f491)
   const out: ConfidenceAnnotation[] = []
 
-  // Single-pass geometry ⇒ objects seen from fewer keyframes get flagged.
+  // Single-pass geometry ⇒ objects seen from fewer keyframes rank lowest.
   const sorted = [...tracked].sort((a, b) => a.score - b.score)
-  const CAUSES: ConfidenceCause[] = ['occlusion', 'low_parallax', 'motion_blur', 'lighting', 'dynamic_object', 'gps_noise']
   for (let i = 0; i < Math.min(6, sorted.length); i++) {
     const t = sorted[i]
-    const cause = CAUSES[i % CAUSES.length]
-    const explanations: Record<ConfidenceCause, string> = {
-      occlusion: `Partially occluded in nearby keyframes — only ${t.observations} viewing angle(s) along the single pass`,
-      motion_blur: 'Motion blur suspected at this ground speed; feature matching reduced',
-      low_parallax: 'Low parallax along a linear flight path — depth estimate weakly constrained',
-      dynamic_object: 'Possible dynamic object; excluded from static reconstruction assumptions',
-      lighting: 'Strong shadow/illumination change reduced grounding confidence here',
-      gps_noise: 'GPS metadata noise near this segment — georeferencing uncertainty elevated',
-    }
+    const views = t.observations === 1 ? 'a single keyframe' : `${t.observations} keyframes`
     const frames: [number, number] = [
       Math.round(t.best.keyframeIndex * (flight.durationSec * 30) / keyframeCount),
       Math.round((t.best.keyframeIndex + 1) * (flight.durationSec * 30) / keyframeCount),
@@ -278,13 +336,12 @@ function buildAnnotations(
     out.push({
       x: t.center.x, y: t.center.y, z: 0,
       score: t.score,
-      cause,
-      explanation: explanations[cause],
+      cause: 'unknown',
+      explanation: `Lowest-scoring object at this location; seen from ${views}. The cause is not diagnosed — this pipeline does not measure occlusion, parallax, blur or telemetry quality.`,
       affectedFrames: frames,
     })
   }
 
-  void flight; void seed; void rand
   return out
 }
 
@@ -336,36 +393,63 @@ export function reconstruct(input: ReconstructInput): ReconstructOutput {
   // 2. Deduplicate across keyframes (multi-view corroboration).
   const tracked = deduplicateDetections(projected)
 
-  // 3. Height field + point cloud + trajectory.
+  // 3. Height field + point cloud + trajectory. The cloud holds scene geometry
+  //    only; the flight path is the separate `trajectory` array below.
   const extent = corridorHalfExtent(tracked, flightParams) * 2
   const cells = buildHeightField(tracked, extent, seed)
-  const points = synthesizePointCloud(cells, tracked, flightParams, cam, seed)
+  const points = synthesizePointCloud(cells, tracked, flightParams, seed)
   const trajectory = buildTrajectory(flightParams)
 
   // 4. Annotations + metrics.
-  const annotations = buildAnnotations(tracked, flightParams, keyframePlan.count, seed)
+  const annotations = buildAnnotations(tracked, flightParams, keyframePlan.count)
   const avgConf = points.length > 0 ? points.reduce((s, p) => s + p.confidence, 0) / points.length : 0
   const labels = Array.from(new Set(tracked.map((t) => t.label)))
+  const coverage = footprintCoverage(cells, extent)
+  const source: GroundingSource = grounding.some((r) => r.source === 'locateanything-3b')
+    ? 'locateanything-3b'
+    : 'simulated'
   const metrics: ReconstructionMetrics = {
     totalPoints: points.length.toLocaleString(),
     accuracy: 'n/a (single pass)',
-    processingTime: 'client-side demo',
-    coverage: `${Math.min(100, (tracked.length / Math.max(1, tracked.length + 8))).toFixed(1)}%`,
+    processingTime: source === 'locateanything-3b' ? 'server worker + client' : 'client-side only',
+    coverage: `${(coverage * 100).toFixed(1)}%`,
     confidenceScore: avgConf.toFixed(2),
     groundedObjects: String(tracked.length),
     groundedLabels: labels.length > 0 ? labels.join(', ') : 'none detected',
     keyframesSampled: String(keyframePlan.count),
-    provenance: 'Reconstructed from LocateAnything-3B detections + flight metadata (demo synthesis)',
+    groundingSource: source === 'locateanything-3b'
+      ? 'LocateAnything-3B worker'
+      : 'simulated adapter (no model was run)',
+    synthesis: SYNTHESIS_NOTE,
+    provenance: source === 'locateanything-3b'
+      ? 'Detections from LocateAnything-3B; geometry synthesised from them + flight metadata'
+      : 'Simulated detections + flight metadata (illustrative scene, no model was run)',
   }
 
-  // 5. Georeferenced bounds from the trajectory.
-  const lls = trajectory.map((p) => ({ lat: p.lat, lng: p.lng }))
-  const bounds = {
-    minLat: Math.min(...lls.map((p) => p.lat)),
-    maxLat: Math.max(...lls.map((p) => p.lat)),
-    minLng: Math.min(...lls.map((p) => p.lng)),
-    maxLng: Math.max(...lls.map((p) => p.lng)),
-  }
+  // 5. Georeferenced bounds from the scene geometry itself, not the trajectory.
+  //    Bounds derived from camera positions are really the flight's bounds: a
+  //    north–south pass has zero longitude width even when the reconstructed
+  //    scene spans a wide block of ground. The cloud is all scene geometry now
+  //    (no track markers), so its extents are the model's extents.
+  const origin = { lat: flight.gpsLat, lng: flight.gpsLng }
+  const xs = points.map((p) => p.x)
+  const ys = points.map((p) => p.y)
+  const bounds = points.length > 0
+    ? (() => {
+        const nw = localToLngLat(origin, Math.min(...xs), Math.max(...ys))
+        const se = localToLngLat(origin, Math.max(...xs), Math.min(...ys))
+        return {
+          minLat: se.lat, maxLat: nw.lat,
+          minLng: nw.lng, maxLng: se.lng,
+        }
+      })()
+    : (() => {
+        const p = poseToLngLat(flightParams, poseAt(flightParams, 0, 0))
+        return { minLat: p.lat, maxLat: p.lat, minLng: p.lng, maxLng: p.lng }
+      })()
 
-  return { points, trajectory, annotations, metrics, bounds, trackedObjects: tracked, projectedDetections: projected }
+  return {
+    points, trajectory, annotations, metrics, bounds, groundingSource: source,
+    trackedObjects: tracked, projectedDetections: projected,
+  }
 }

@@ -14,7 +14,11 @@ import assert from 'node:assert/strict'
 import {
   KeyframePlan, createSimulatedLocateAnythingAdapter, planKeyframes,
 } from '../src/app/droneviz3d/grounding'
-import { TRAJECTORY_RGB, isTrajectoryPoint, reconstruct, ReconstructOutput } from '../src/app/droneviz3d/reconstruct'
+import {
+  TRAJECTORY_RGB, buildHeightField, footprintCoverage, isTrajectoryPoint,
+  reconstruct, ReconstructOutput,
+} from '../src/app/droneviz3d/reconstruct'
+import { TrackedObject } from '../src/app/droneviz3d/grounding'
 import { FlightParams } from '../src/app/droneviz3d/geometry'
 import { ValidatedFlightData } from '../src/app/droneviz3d/validator'
 
@@ -68,8 +72,21 @@ test('reconstructed heights are +z and the ground is z ≈ 0 (z-up ENU)', async 
   const out = await run(flight())
   const zs = out.points.map((p) => p.z)
   assert.ok(Math.min(...zs) >= -0.16, 'nothing dips meaningfully below the ground plane')
-  assert.ok(Math.max(...zs) >= 100, 'the drone track sits at altitude on +z')
+  // The cloud is scene geometry only. It used to carry drone-track markers at
+  // cruise altitude, which is what made a scene "height" of 120 m plausible.
+  assert.ok(Math.max(...zs) < 40, `scene heights must be object-scale, got ${Math.max(...zs)}`)
   assert.ok(out.points.some((p) => p.z > 1 && p.z < 40), 'objects extrude upward from the ground')
+})
+
+test('the point cloud holds no drone-track markers; the flight path is separate', async () => {
+  const out = await run(flight())
+  const markers = out.points.filter(isTrajectoryPoint)
+  assert.equal(markers.length, 0, 'drone positions must not enter the point cloud')
+  assert.ok(out.trajectory.length > 0, 'the path still exists, as its own layer')
+  // Statistics must be unaffected by how densely the path is sampled: nothing in
+  // the cloud may carry the sentinel colour.
+  const classLike = new Set(out.points.map((p) => `${p.r},${p.g},${p.b}`))
+  assert.ok(!classLike.has(`${TRAJECTORY_RGB.r},${TRAJECTORY_RGB.g},${TRAJECTORY_RGB.b}`))
 })
 
 test('the tracked objects and their heights stay above the ground plane', async () => {
@@ -120,7 +137,25 @@ test('metrics agree with the model they describe', async () => {
   assert.equal(out.metrics.groundedObjects, String(out.trackedObjects.length))
   const mean = out.points.reduce((s, p) => s + p.confidence, 0) / out.points.length
   assert.equal(out.metrics.confidenceScore, mean.toFixed(2))
-  assert.ok(out.metrics.provenance.includes('LocateAnything-3B'))
+  // This run used the simulated adapter, so the provenance must say so rather
+  // than crediting LocateAnything-3B for detections no model produced.
+  assert.equal(out.groundingSource, 'simulated')
+  assert.match(out.metrics.provenance, /Simulated/)
+  assert.ok(!/LocateAnything-3B detections/.test(out.metrics.provenance))
+  assert.match(out.metrics.groundingSource, /simulated/i)
+  // What is synthesized is stated, not left to inference.
+  assert.match(out.metrics.synthesis, /synthesi/i)
+})
+
+test('a worker-backed run reports its real source', async () => {
+  const plan = planKeyframes(180)
+  const out = reconstruct({
+    flight: flight(), videoDurationSec: 180,
+    grounding: plan.times.map((_, i) => ({ boxes: [], points: [], keyframeIndex: i, source: 'locateanything-3b' as const })),
+    keyframePlan: plan,
+  })
+  assert.equal(out.groundingSource, 'locateanything-3b')
+  assert.match(out.metrics.provenance, /LocateAnything-3B/)
 })
 
 test('point confidence stays inside the documented band', async () => {
@@ -132,25 +167,31 @@ test('point confidence stays inside the documented band', async () => {
   }
 })
 
-test('the drone track is embedded in the point cloud at exactly the flight altitude', async () => {
-  const out = await run(flight())
-  const track = out.points.filter(isTrajectoryPoint)
-  assert.equal(track.length, 61)
-  for (const p of track) assert.equal(p.z, 120)
-  // The track colour must stay unique against every class colour, or the
-  // viewer's path layer would swallow real reconstruction points.
-  const classLike = new Set(out.points.filter((p) => !isTrajectoryPoint(p)).map((p) => `${p.r},${p.g},${p.b}`))
-  assert.ok(!classLike.has(`${TRAJECTORY_RGB.r},${TRAJECTORY_RGB.g},${TRAJECTORY_RGB.b}`))
-})
-
-test('georeferenced bounds contain every trajectory pose', async () => {
+test('georeferenced bounds describe the scene and contain every scene point', async () => {
   const out = await run(flight())
   assert.equal(out.trajectory.length, 40)
-  for (const pose of out.trajectory) {
-    assert.ok(pose.lat >= out.bounds.minLat && pose.lat <= out.bounds.maxLat)
-    assert.ok(pose.lng >= out.bounds.minLng && pose.lng <= out.bounds.maxLng)
+  const M_PER_DEG_LAT = 111320
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos((28.6139 * Math.PI) / 180)
+  // Bounds come from the reconstructed geometry, not the camera positions, so
+  // every point the model would export must fall inside them.
+  for (const p of out.points) {
+    const lat = 28.6139 + p.y / M_PER_DEG_LAT
+    const lng = 77.209 + p.x / mPerDegLng
+    assert.ok(lat >= out.bounds.minLat - 1e-9 && lat <= out.bounds.maxLat + 1e-9, `lat ${lat} outside bounds`)
+    assert.ok(lng >= out.bounds.minLng - 1e-9 && lng <= out.bounds.maxLng + 1e-9, `lng ${lng} outside bounds`)
   }
-  assert.ok(out.bounds.minLat !== out.bounds.maxLat || out.bounds.minLng !== out.bounds.maxLng)
+  assert.ok(out.bounds.minLat <= out.bounds.maxLat && out.bounds.minLng <= out.bounds.maxLng)
+})
+
+test('bounds span the scene east–west even on a due-north flight', async () => {
+  // The regression this locks: deriving bounds from the trajectory gives a
+  // north–south pass a longitude width of exactly zero, so the model claimed to
+  // cover no ground east–west while its points spanned tens of metres.
+  const out = await run(flight({ heading: 0 }))
+  const M_PER_DEG_LAT = 111320
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos((28.6139 * Math.PI) / 180)
+  const widthM = (out.bounds.maxLng - out.bounds.minLng) * mPerDegLng
+  assert.ok(widthM > 10, `east–west extent must reflect the scene, got ${widthM.toFixed(2)} m`)
 })
 
 // ---------- Degraded inputs ----------
@@ -167,6 +208,48 @@ test('zero detections still yields a ground model with honest empty metrics', as
   assert.equal(out.metrics.groundedLabels, 'none detected')
   assert.ok(out.points.length > 0, 'the ground carpet is still generated')
   assert.equal(out.annotations.length, 0)
+})
+
+// ---------- Coverage ----------
+
+function trackedAt(x: number, y: number, halfExtentX = 4, halfExtentY = 3): TrackedObject {
+  const hit = {
+    label: 'building', center: { x, y, z: 0 }, halfExtentX, halfExtentY,
+    score: 0.9, keyframeIndex: 0, viewingAltitude: 120,
+  }
+  return {
+    label: 'building', center: { x, y, z: 0 }, halfExtentX, halfExtentY,
+    score: 0.9, observations: 1, hits: [hit], best: hit,
+  }
+}
+
+test('coverage is an area share, not an object count', () => {
+  const extent = 320
+  assert.equal(footprintCoverage(new Map(), extent), 0, 'an empty scene covers nothing')
+  const one = buildHeightField([trackedAt(0, 0)], extent, 1)
+  const two = buildHeightField([trackedAt(0, 0), trackedAt(200, 200)], extent, 1)
+  assert.ok(footprintCoverage(one, extent) > 0)
+  assert.ok(footprintCoverage(two, extent) > footprintCoverage(one, extent))
+  assert.ok(footprintCoverage(one, extent) <= 1, 'a share can never exceed 1')
+  assert.equal(footprintCoverage(one, 0), 0, 'a degenerate extent cannot divide by zero')
+})
+
+test('overlapping footprints are counted once', () => {
+  const extent = 320
+  const single = footprintCoverage(buildHeightField([trackedAt(10, 10)], extent, 1), extent)
+  const overlapping = footprintCoverage(buildHeightField([trackedAt(10, 10), trackedAt(10.5, 10.5)], extent, 1), extent)
+  const disjoint = footprintCoverage(buildHeightField([trackedAt(10, 10), trackedAt(200, 200)], extent, 1), extent)
+  // Two detections of one footprint must not claim twice the area...
+  assert.ok(Math.abs(overlapping - single) < single * 0.25, `overlap inflated coverage: ${overlapping} vs ${single}`)
+  // ...while two separate footprints must add up.
+  assert.ok(disjoint > single * 1.5, `separate footprints should add: ${disjoint} vs ${single}`)
+})
+
+test('the reported coverage is a real percentage of the modelled area', async () => {
+  const out = await run(flight())
+  const value = Number(out.metrics.coverage.replace('%', ''))
+  assert.ok(Number.isFinite(value), `coverage must parse, got '${out.metrics.coverage}'`)
+  assert.ok(value > 0 && value <= 100, `coverage must be in (0, 100], got '${out.metrics.coverage}'`)
 })
 
 test('detections from several keyframes fuse into the same tracked object', async () => {

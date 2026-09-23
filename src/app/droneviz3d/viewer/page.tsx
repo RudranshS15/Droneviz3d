@@ -288,7 +288,7 @@ export default function ViewerPage() {
               aria-pressed={colorMode === 'confidence'}
               className="px-3 py-1.5 rounded-lg bg-white/[0.06] border border-white/[0.12] text-[12px] text-[#e7e5e4] hover:bg-white/[0.1] transition-all font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#d4a053]"
             >
-              {colorMode === 'rgb' ? 'Show confidence colours' : 'Show source colours'}
+              {colorMode === 'rgb' ? 'Show detection-quality colours' : 'Show source colours'}
             </button>
             <button
               type="button"
@@ -312,7 +312,7 @@ export default function ViewerPage() {
                   : 'bg-white/[0.06] border-white/[0.12] text-[#a8a29e] hover:bg-white/[0.1]'
               }`}
             >
-              Flight path {showTrajectory ? 'on' : 'off'}
+              Assumed path {showTrajectory ? 'on' : 'off'}
             </button>
             <button
               type="button"
@@ -373,7 +373,8 @@ export default function ViewerPage() {
             </button>
           )}
           <span className="text-[11px] text-[#a8a29e] text-wrap">
-            Ground plane is horizontal; the gizmo shows East, North and Up.
+            Ground plane is horizontal; the gizmo shows East, North and Up. The flight path is modelled from your
+            speed, heading, altitude and duration — it is assumed, not recovered from the video.
           </span>
         </div>
       </div>

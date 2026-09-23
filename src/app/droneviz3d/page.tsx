@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState, useRef } from 'react'
 
-const pipeline = ['Video', 'Keyframes', 'Grounding', 'Projection', 'Tracking', 'Height Field', 'Point Cloud', 'Mesh', 'Georeference', 'Export']
+const pipeline = ['Video', 'Keyframes', 'Grounding', 'Projection', 'Tracking', 'Height Field', 'Point Cloud', 'Georeference', 'Export']
 
 function PipelineDemo() {
   const [step, setStep] = useState(0)
@@ -338,7 +338,7 @@ export default function LandingPage() {
               {
                 step: '03',
                 title: 'Visualize & Export',
-                desc: 'Interactive 3D viewer with confidence heatmap, measurement tools. Export as OBJ/PLY/GLTF with orthophoto and DEM overlays.',
+                desc: 'Interactive 3D viewer with a detection-quality overlay and object evidence. Export the point cloud as PLY, OBJ or georeferenced CSV; survey-grade formats need a photogrammetry backend this demo does not run.',
                 icon: 'M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5',
               },
             ].map((item) => (

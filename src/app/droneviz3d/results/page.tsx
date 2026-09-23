@@ -10,6 +10,7 @@ import { VIEWER_PALETTE, renderScene } from '../viewer-render'
 import { frameCamera } from '../viewer-camera'
 import { countByBand } from '../confidence'
 import { buildMetricGroups, deriveReconstructionStatus, type MetricEntry, type StatusTone } from '../results-view'
+import { WORKER_MODE } from '../store'
 
 const TONE_CLASSES: Record<StatusTone, string> = {
   neutral: 'border-[#292524] bg-[#1c1917]/30',
@@ -71,19 +72,20 @@ function ConfidenceDistribution({ points }: { points: { confidence: number }[] }
 
 function ConfidenceAnnotations({ annotations }: { annotations: ConfidenceAnnotation[] }) {
   const causeLabels: Record<ConfidenceAnnotation['cause'], string> = {
+    unknown: 'Cause not diagnosed',
     occlusion: 'Occlusion', motion_blur: 'Motion Blur', low_parallax: 'Low Parallax',
     dynamic_object: 'Dynamic Object', lighting: 'Lighting', gps_noise: 'GPS Noise',
   }
   return (
     <div className="p-5 rounded-2xl bg-[#1c1917]/20 border border-[#292524]">
-      <h3 className="text-[13px] font-semibold text-[#e7e5e4] mb-1">Confidence annotations</h3>
+      <h3 className="text-[13px] font-semibold text-[#e7e5e4] mb-1">Lowest-scoring objects</h3>
       <p className="text-[11px] text-[#a8a29e] mb-4">
-        {annotations.length} region{annotations.length === 1 ? '' : 's'} with reduced confidence
+        {annotations.length} object{annotations.length === 1 ? '' : 's'} ranked lowest by the detection heuristic. The
+        pipeline does not measure <em>why</em> they scored low, so no cause is claimed.
       </p>
       {annotations.length === 0 ? (
         <p className="text-[11px] text-[#a8a29e]">
-          No weak regions were flagged for this run — every detected object was seen from enough keyframes to fuse
-          cleanly.
+          No objects were ranked low enough to flag for this run.
         </p>
       ) : (
         <ul className="space-y-3">
@@ -91,7 +93,12 @@ function ConfidenceAnnotations({ annotations }: { annotations: ConfidenceAnnotat
             <li key={i} className="p-4 rounded-xl border border-[#292524] bg-[#0c0a09]/20 hover:border-[#c27a3a]/40 transition-all">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[12px] text-[#e7e5e4] font-medium">{causeLabels[ann.cause]}</span>
-                <span className="text-[11px] font-semibold text-[#d4a053]">{(ann.score * 100).toFixed(0)}%</span>
+                <span
+                  className="text-[11px] font-semibold text-[#d4a053]"
+                  title="Detection-quality heuristic, not a calibrated probability"
+                >
+                  heuristic {ann.score.toFixed(2)}
+                </span>
               </div>
               <p className="text-[11px] text-[#a8a29e] leading-relaxed mb-2">{ann.explanation}</p>
               <div className="flex items-center gap-4 text-[10px] text-[#a8a29e]/80">
@@ -160,6 +167,7 @@ export default function ResultsPage() {
     pointCount: pointCloud.length,
     objectCount: trackedObjects.length,
     restoredFromStorage,
+    groundingSource: metrics?.groundingSource,
   })
 
   const groups = buildMetricGroups({ metrics, trackedObjects })
@@ -296,7 +304,9 @@ export default function ResultsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
               <MetricGroup
                 title="Measured from your upload"
-                subtitle="Counts of what the grounding model actually detected in the sampled keyframes."
+                subtitle={metrics && /simulated/i.test(metrics.groundingSource ?? '')
+                  ? 'Counts from the simulated grounding step — no model was run for this result.'
+                  : 'Counts of what the grounding model actually detected in the sampled keyframes.'}
                 entries={groups.measured}
                 tone="measured"
               />
@@ -310,10 +320,9 @@ export default function ResultsPage() {
 
             <div className="mb-8 p-4 rounded-xl border border-[#c27a3a]/30 bg-[#c27a3a]/[0.06]" role="note">
               <p className="text-[12px] text-[#e7e5e4] leading-relaxed">
-                <strong className="text-[#d4a053]">How this model was generated:</strong> {metrics.provenance}.
-                Object positions and footprints come from LocateAnything-3B detections projected through your flight
-                metadata; heights and the surface detail between detected objects are synthesized. A single pass gives
-                no stereo baseline, so none of these numbers are survey-grade measurements.
+                <strong className="text-[#d4a053]">How this model was generated:</strong> {metrics.provenance}.{' '}
+                {metrics.synthesis ?? 'Object heights and the surface detail between detections are synthesized.'}{' '}
+                A single pass gives no stereo baseline, so none of these numbers are survey-grade measurements.
               </p>
             </div>
 
@@ -388,8 +397,10 @@ export default function ResultsPage() {
                 ))}
               </dl>
               <p className="text-[11px] text-[#a8a29e] mt-3">
-                This metadata stayed in your browser and is kept here with the model until you
-                reset — nothing was uploaded to a server.
+                This metadata stayed in your browser and is kept here with the model until you reset.
+                {WORKER_MODE
+                  ? ' The video file was not uploaded, but in worker mode the sampled keyframes were sent to the grounding worker for inference — the video\u2019s visual contents did leave this device.'
+                  : ' Nothing was uploaded to a server: this result was produced entirely on your device.'}
               </p>
             </details>
           </div>
