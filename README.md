@@ -115,6 +115,6 @@ browser. See the Privacy Policy §§3 and 6, and the Cookies Policy §3.
 ## Pages
 - `/droneviz3d` — Landing page
 - `/droneviz3d/upload` — Video upload + GPS metadata form
-- `/droneviz3d/processing` — 10-step pipeline visualization
+- `/droneviz3d/processing` — 9-step pipeline visualization (`STEP_DEFINITIONS`)
 - `/droneviz3d/viewer` — Interactive 3D point cloud viewer
 - `/droneviz3d/results` — Metrics (measured vs estimated), detection-quality distribution, export

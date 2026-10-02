@@ -3,7 +3,117 @@
 import Link from 'next/link'
 import { useEffect, useState, useRef } from 'react'
 
-const pipeline = ['Video', 'Keyframes', 'Grounding', 'Projection', 'Tracking', 'Height Field', 'Point Cloud', 'Georeference', 'Export']
+import { mulberry32 } from './geometry'
+import { buildHeroField, heroFieldSize, pointMaterial, projectField } from './hero-points'
+import { STEP_DEFINITIONS } from './pipeline'
+import { colors } from './tokens'
+
+/**
+ * The demo's labels come from the pipeline definition itself, so the count in
+ * the heading above it cannot drift from the steps the code actually runs. It
+ * had drifted: the heading said "10 steps" while this array held nine, because
+ * the mesh stage was removed and the copy was not.
+ */
+const pipeline = STEP_DEFINITIONS.map((step) => step.name)
+
+/**
+ * The decorative point field behind the hero copy.
+ *
+ * Canvas 2D rather than WebGL: this is a few thousand dots, and the landing page
+ * has no business opening a second GPU context beside the one the viewer needs.
+ * It paints a single static frame under `prefers-reduced-motion`, stops while
+ * the tab is hidden, and is `aria-hidden` — it carries no information.
+ */
+function HeroPointField() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const context = canvas?.getContext('2d')
+    if (!canvas || !context) return
+
+    // The count follows the canvas area: a fixed field smears into a bright
+    // blob on a narrow panel and speckles out on a wide one.
+    let field = buildHeroField(0)
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let frame = 0
+    let yaw = 0.4
+    let width = 0
+    let height = 0
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect()
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      width = rect.width
+      height = rect.height
+      canvas.width = Math.max(1, Math.round(width * dpr))
+      canvas.height = Math.max(1, Math.round(height * dpr))
+      context.setTransform(dpr, 0, 0, dpr, 0, 0)
+      field = buildHeroField(heroFieldSize(width, height))
+    }
+
+    const draw = () => {
+      context.clearRect(0, 0, width, height)
+      const projected = projectField(field, {
+        yaw,
+        tilt: 0.42,
+        scale: Math.min(width, height) * 0.85,
+        distance: 2.6,
+      })
+      const centerX = width / 2
+      const centerY = height * 0.56
+      for (const point of projected) {
+        const size = 0.7 + point.fade * 1.8
+        context.globalAlpha = 0.06 + point.fade * 0.45
+        context.fillStyle = colors[pointMaterial(point.tone)]
+        context.fillRect(centerX + point.x, centerY + point.y, size, size)
+      }
+      context.globalAlpha = 1
+    }
+
+    const tick = () => {
+      yaw += 0.0022
+      draw()
+      frame = window.requestAnimationFrame(tick)
+    }
+
+    resize()
+    draw()
+    if (!reduced) frame = window.requestAnimationFrame(tick)
+
+    const onResize = () => {
+      resize()
+      draw()
+    }
+    const onVisibility = () => {
+      if (document.hidden) {
+        window.cancelAnimationFrame(frame)
+        frame = 0
+      } else if (!reduced && frame === 0) {
+        frame = window.requestAnimationFrame(tick)
+      }
+    }
+    window.addEventListener('resize', onResize)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', onResize)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 h-full w-full"
+      style={{
+        maskImage: 'radial-gradient(ellipse at 50% 45%, #000 28%, transparent 72%)',
+        WebkitMaskImage: 'radial-gradient(ellipse at 50% 45%, #000 28%, transparent 72%)',
+      }}
+    />
+  )
+}
 
 function PipelineDemo() {
   const [step, setStep] = useState(0)
@@ -71,6 +181,23 @@ function PipelineDemo() {
     </div>
   )
 }
+
+/**
+ * The illustrative sample dots for the before/after toggle. Seeded rather than
+ * random: this block renders on the server and again during hydration, and
+ * Math.random() in render made the two disagree on every load — React logged a
+ * hydration mismatch and the dots jumped on first paint.
+ */
+const sampleDots = (() => {
+  const rng = mulberry32(0x1ce)
+  return Array.from({ length: 200 }, () => ({
+    x: 100 + rng() * 600,
+    y: 200 + rng() * 200,
+    confidence: rng(),
+    radius: 0.8 + rng() * 1.2,
+    opacity: 0.4 + rng() * 0.4,
+  }))
+})()
 
 function BeforeAfterDemo() {
   const [showAfter, setShowAfter] = useState(false)
@@ -160,21 +287,16 @@ function BeforeAfterDemo() {
                   </g>
                 ))}
                 {/* Point cloud dots */}
-                {Array.from({ length: 200 }).map((_, i) => {
-                  const x = 100 + Math.random() * 600
-                  const y = 200 + Math.random() * 200
-                  const confidence = Math.random()
-                  return (
-                    <circle
-                      key={i}
-                      cx={x}
-                      cy={y}
-                      r={0.8 + Math.random() * 1.2}
-                      fill={confidence > 0.7 ? '#22d3ee' : confidence > 0.4 ? '#fbbf24' : '#f87171'}
-                      opacity={0.4 + Math.random() * 0.4}
-                    />
-                  )
-                })}
+                {sampleDots.map((dot, i) => (
+                  <circle
+                    key={i}
+                    cx={dot.x}
+                    cy={dot.y}
+                    r={dot.radius}
+                    fill={dot.confidence > 0.7 ? '#22d3ee' : dot.confidence > 0.4 ? '#fbbf24' : '#f87171'}
+                    opacity={dot.opacity}
+                  />
+                ))}
                 {/* Camera trajectory */}
                 <path
                   d="M 100 120 Q 250 80 400 100 Q 550 120 700 90"
@@ -223,6 +345,9 @@ export default function LandingPage() {
             backgroundSize: '80px 80px',
           }}
         />
+
+        {/* Point field — the only ambient effect on this page */}
+        <HeroPointField />
 
         <div className="relative z-10 max-w-5xl">
           <div className={`transition-all duration-700 ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
@@ -292,7 +417,7 @@ export default function LandingPage() {
         <div className="text-center mb-12">
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-3">
             From video to 3D in{' '}
-            <span className="text-cyan-400">10 steps</span>
+            <span className="text-cyan-400">{pipeline.length} steps</span>
           </h2>
           <p className="text-white/30 max-w-xl mx-auto text-[15px]">
             The processing pipeline grounds your footage with LocateAnything-3B and generates a georeferenced 3D model from those detections.

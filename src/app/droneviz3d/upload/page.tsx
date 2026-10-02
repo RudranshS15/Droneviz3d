@@ -4,6 +4,7 @@ import { useCallback, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useDroneVizStore } from '../store'
+import { videoFileError } from '../video-file'
 
 export default function UploadPage() {
   const router = useRouter()
@@ -14,25 +15,47 @@ export default function UploadPage() {
     setVideoFile, setVideoDuration, setMetadata, setDataConsent, reset, validateAndStart,
   } = useDroneVizStore()
   const [dragOver, setDragOver] = useState(false)
+  const [dropError, setDropError] = useState<string | null>(null)
   const [fileName, setFileName] = useState(videoFile?.name || '')
   const fileRef = useRef<HTMLInputElement>(null)
+  // dragenter/dragleave bubble from every child, so count them instead of
+  // toggling a flag — a plain flag flickers as the pointer crosses the icon.
+  const dragDepth = useRef(0)
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOver(false)
-    const file = e.dataTransfer.files[0]
-    if (file && file.type.startsWith('video/')) {
-      setVideoFile(file)
-      setFileName(file.name)
+  const acceptFile = useCallback((file: File | undefined) => {
+    if (!file) return
+    const problem = videoFileError(file)
+    if (problem) {
+      setDropError(problem)
+      return
     }
+    setDropError(null)
+    setVideoFile(file)
+    setFileName(file.name)
   }, [setVideoFile])
 
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragDepth.current += 1
+    setDragOver(true)
+  }
+  const onDragOver = (e: React.DragEvent) => e.preventDefault()
+  const onDragLeave = () => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragOver(false)
+  }
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragDepth.current = 0
+    setDragOver(false)
+    acceptFile(e.dataTransfer.files[0])
+  }
+  const dropZoneProps = { onDragEnter, onDragOver, onDragLeave, onDrop }
+
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setVideoFile(file)
-      setFileName(file.name)
-    }
+    acceptFile(e.target.files?.[0])
+    // Clear it so choosing the same file again still fires onChange.
+    e.target.value = ''
   }
 
   const handleStart = () => {
@@ -86,31 +109,25 @@ export default function UploadPage() {
           {/* Left: Upload + Video Preview */}
           <div className="lg:col-span-3 space-y-6">
             {/* Video Upload Zone */}
-            <div
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-              onClick={() => fileRef.current?.click()}
-              className={`relative rounded-2xl border-2 border-dashed transition-all duration-200 cursor-pointer overflow-hidden ${
-                dragOver
-                  ? 'border-cyan-400 bg-cyan-500/[0.05]'
-                  : videoFile
-                  ? 'border-green-500/40 bg-green-500/[0.03]'
-                  : 'border-white/[0.14] hover:border-white/[0.25] bg-white/[0.02]'
-              }`}
-            >
+            <div className="space-y-3" {...dropZoneProps}>
+              {/* One real input, referenced by every affordance below, so the
+                  picker, the keyboard and the drop zone are the same control. */}
               <input
                 ref={fileRef}
+                id="video-input"
                 type="file"
                 accept="video/*"
                 onChange={handleFile}
-                className="sr-only"
-                id="video-input"
-                aria-label="Upload drone video file"
+                className="peer sr-only"
+                aria-label="Upload drone video file — MP4, MOV, AVI, MKV or WebM"
               />
 
               {videoPreview ? (
-                <div className="relative">
+                <div
+                  className={`relative rounded-2xl border-2 transition-all duration-200 overflow-hidden ${
+                    dragOver ? 'border-cyan-400 bg-cyan-500/[0.05]' : 'border-green-500/40 bg-green-500/[0.03]'
+                  }`}
+                >
                   <video
                     src={videoPreview}
                     className="w-full aspect-video object-cover rounded-xl"
@@ -125,7 +142,7 @@ export default function UploadPage() {
                     </span>
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); reset(); setFileName('') }}
+                      onClick={() => { reset(); setFileName(''); setDropError(null) }}
                       aria-label="Remove uploaded video and reset the form"
                       className="p-1.5 rounded-lg bg-black/70 backdrop-blur-sm text-[#a8a29e] hover:text-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400 transition-colors"
                     >
@@ -136,7 +153,12 @@ export default function UploadPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-20 px-6">
+                <label
+                  htmlFor="video-input"
+                  className={`flex flex-col items-center justify-center py-20 px-6 rounded-2xl border-2 border-dashed cursor-pointer transition-all duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-[#d4a053] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[#0c0a09] ${
+                    dragOver ? 'border-cyan-400 bg-cyan-500/[0.05]' : 'border-white/[0.14] hover:border-white/[0.25] bg-white/[0.02]'
+                  }`}
+                >
                   <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.1] flex items-center justify-center mb-4" aria-hidden="true">
                     <svg className="w-8 h-8 text-[#a8a29e]" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
@@ -148,6 +170,28 @@ export default function UploadPage() {
                   <div className="text-[#a8a29e] text-[12px]">
                     Supports MP4, MOV, AVI, MKV — 1080p or 4K recommended
                   </div>
+                </label>
+              )}
+
+              {/* A refused drop says why, instead of doing nothing. */}
+              {dropError && (
+                <p role="alert" className="flex items-start gap-2 text-[12px] text-red-200">
+                  <span aria-hidden="true">⚠</span>
+                  {dropError}
+                </p>
+              )}
+
+              {videoFile && (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-[12px] text-[#a8a29e]">
+                    Drop another file anywhere on this panel to replace it.
+                  </span>
+                  <label
+                    htmlFor="video-input"
+                    className="shrink-0 px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-[12px] text-[#e7e5e4] font-medium cursor-pointer hover:bg-white/[0.08] peer-focus-visible:ring-2 peer-focus-visible:ring-[#d4a053] transition-colors"
+                  >
+                    Replace video
+                  </label>
                 </div>
               )}
             </div>
