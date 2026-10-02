@@ -3,7 +3,10 @@
 import { useCallback, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useDroneVizStore } from '../store'
+import { useDroneVizStore, PERSIST_KEY } from '../store'
+import { deriveSessionStatus } from '../session-status'
+import { SessionStatusBar } from '../session-status-bar'
+import { persistedModelInfo, useTracePage } from '../trace'
 import { videoFileError } from '../video-file'
 
 export default function UploadPage() {
@@ -13,6 +16,7 @@ export default function UploadPage() {
   const {
     videoFile, videoPreview, metadata, validationErrors, dataConsent,
     setVideoFile, setVideoDuration, setMetadata, setDataConsent, reset, validateAndStart,
+    steps, isProcessing, processingComplete, pipelineError, pointCloud, jobId,
   } = useDroneVizStore()
   const [dragOver, setDragOver] = useState(false)
   const [dropError, setDropError] = useState<string | null>(null)
@@ -21,6 +25,26 @@ export default function UploadPage() {
   // dragenter/dragleave bubble from every child, so count them instead of
   // toggling a flag — a plain flag flickers as the pointer crosses the icon.
   const dragDepth = useRef(0)
+
+  // Which of the five session states this page is showing, from the store rather
+  // than from local flags: picking a file must never leave "Idle" behind, and a
+  // restored model must not leave "Idle" behind either.
+  const status = deriveSessionStatus({
+    hasVideo: videoFile !== null,
+    isProcessing,
+    processingComplete,
+    pipelineError,
+    steps,
+    pointCount: pointCloud.length,
+  })
+
+  useTracePage('upload', {
+    jobId,
+    state: status.id,
+    readsFromStore: ['videoFile', 'metadata', 'validationErrors', 'dataConsent', 'steps', 'pointCloud', 'jobId'],
+    readKeys: [PERSIST_KEY],
+    stored: persistedModelInfo(PERSIST_KEY),
+  })
 
   const acceptFile = useCallback((file: File | undefined) => {
     if (!file) return
@@ -102,6 +126,7 @@ export default function UploadPage() {
             ? 'Provide your video file and flight metadata to begin 3D reconstruction. The video is decoded in your browser; sampled keyframes alone are sent to the grounding worker (see the consent note below), and the video itself is never uploaded.'
             : 'Provide your video file and flight metadata to begin 3D reconstruction. Everything is processed locally in your browser — nothing is uploaded.'}
         </p>
+        <SessionStatusBar status={status} className="mt-4" />
       </div>
 
       <div className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 pb-20">

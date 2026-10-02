@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useDroneVizStore } from '../store'
+import { useDroneVizStore, PERSIST_KEY } from '../store'
+import { persistedModelInfo, useTracePage } from '../trace'
 import { buildSceneModel } from '../scene'
 import { ColorMode, VIEWER_PALETTE, renderScene } from '../viewer-render'
 import { CONFIDENCE_BANDS, bandFor } from '../confidence'
@@ -17,7 +18,21 @@ const DEFAULT_ELEVATION = degToRad(28)
 
 export default function ViewerPage() {
   const router = useRouter()
-  const { pointCloud, processingComplete, trackedObjects, trajectory, metadata, hydrated } = useDroneVizStore()
+  const {
+    pointCloud, processingComplete, trackedObjects, trajectory, metadata, hydrated,
+    jobId, videoName, pipelineError,
+  } = useDroneVizStore()
+
+  useTracePage('viewer', {
+    jobId,
+    readsFromStore: ['pointCloud', 'trajectory', 'trackedObjects', 'metadata', 'processingComplete', 'jobId'],
+    readKeys: [PERSIST_KEY],
+    stored: persistedModelInfo(PERSIST_KEY),
+    videoName,
+    points: pointCloud.length,
+    complete: processingComplete,
+    error: pipelineError,
+  })
 
   const sceneModel = useMemo(
     () => buildSceneModel({ pointCloud, trajectory, trackedObjects, metadata }),

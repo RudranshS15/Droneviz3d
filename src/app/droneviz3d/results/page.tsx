@@ -10,7 +10,8 @@ import { VIEWER_PALETTE, renderScene } from '../viewer-render'
 import { frameCamera } from '../viewer-camera'
 import { countByBand } from '../confidence'
 import { buildMetricGroups, deriveReconstructionStatus, type MetricEntry, type StatusTone } from '../results-view'
-import { WORKER_MODE } from '../store'
+import { WORKER_MODE, PERSIST_KEY } from '../store'
+import { persistedModelInfo, useTracePage } from '../trace'
 
 const TONE_CLASSES: Record<StatusTone, string> = {
   neutral: 'border-[#292524] bg-[#1c1917]/30',
@@ -153,7 +154,7 @@ export default function ResultsPage() {
   const {
     processingComplete, isProcessing, metrics, pointCloud, annotations, trajectory,
     trackedObjects, bounds, videoFile, videoName, metadata, restoredFromStorage, reset,
-    pipelineError,
+    pipelineError, jobId,
   } = useDroneVizStore()
 
   const sceneModel = useMemo(
@@ -170,6 +171,15 @@ export default function ResultsPage() {
     restoredFromStorage,
     groundingSource: metrics?.groundingSource,
     pipelineError,
+  })
+
+  useTracePage('results', {
+    jobId,
+    state: status.id,
+    readsFromStore: ['metrics', 'pointCloud', 'trackedObjects', 'trajectory', 'bounds', 'videoName', 'restoredFromStorage', 'pipelineError', 'jobId'],
+    readKeys: [PERSIST_KEY],
+    stored: persistedModelInfo(PERSIST_KEY),
+    points: pointCloud.length,
   })
 
   const groups = buildMetricGroups({ metrics, trackedObjects })
