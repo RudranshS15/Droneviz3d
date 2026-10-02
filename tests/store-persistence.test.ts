@@ -259,3 +259,92 @@ test('what gets persisted is only the finished model', () => {
   assert.ok(Array.isArray(persisted.state.pointCloud))
   assert.equal(persisted.state.pointCloud.length, 3 * 7)
 })
+
+test('choosing a different video clears the previous model from memory and storage', () => {
+  // The reported bug, in one test: a stored VIDEO-A run was relabelled as
+  // VIDEO-B while keeping VIDEO-A's geometry and metrics, so the results page
+  // showed the new file name over the old numbers.
+  const storage = fakeStorage(JSON.stringify({
+    state: {
+      processingComplete: true, pointCloud: cloudOf(5), trajectory: [], annotations: [],
+      trackedObjects: [], bounds: { minLat: 1, minLng: 2, maxLat: 3, maxLng: 4 },
+      videoName: 'VIDEO-A.mp4', videoDurationSec: 90,
+      metadata: METADATA, metrics: metricsFixture(), jobId: 'job-a',
+    },
+    version: 1,
+  }))
+  const store = loadStore(storage)
+  assert.equal(store.getState().videoName, 'VIDEO-A.mp4', 'precondition: the stored run is the current one')
+  assert.ok(storage.dump().has(KEY), 'precondition: there is a stored model to lose')
+
+  store.getState().setVideoFile(new File(['b'], 'VIDEO-B.mp4', { type: 'video/mp4' }))
+
+  const state = store.getState()
+  assert.equal(state.videoName, 'VIDEO-B.mp4', 'the new selection is named')
+  assert.equal(state.pointCloud.length, 0, 'the previous geometry must not survive the new file')
+  assert.equal(state.metrics, null, 'nor the previous numbers')
+  assert.deepEqual(state.trajectory, [])
+  assert.deepEqual(state.trackedObjects, [])
+  assert.equal(state.bounds, null)
+  assert.equal(state.processingComplete, false)
+  assert.equal(state.restoredFromStorage, false)
+  assert.equal(state.isProcessing, false, 'choosing a file does not start a run')
+  assert.equal(state.videoDurationSec, 0, "the new clip must not inherit the old clip's length")
+  assert.equal(state.jobId, null, 'the previous run identity is over')
+  assert.equal(
+    storage.dump().has(KEY), false,
+    'the old model must not stay stored under the new file name'
+  )
+})
+
+test('resetSession clears the run but keeps the flight-metadata draft and the consent decision', () => {
+  const storage = fakeStorage()
+  const store = loadStore(storage)
+  store.getState().setVideoFile(new File(['x'], 'clip.webm', { type: 'video/webm' }))
+  store.getState().setMetadata({ gpsLat: '19.0760', gpsLng: '72.8777' })
+  store.getState().setDataConsent(true)
+  store.getState().completeProcessingWith({
+    points: cloudOf(3), trajectory: [], annotations: [], metrics: metricsFixture(),
+    bounds: { minLat: 1, minLng: 2, maxLat: 3, maxLng: 4 },
+    trackedObjects: [], projectedDetections: [], groundingSource: 'simulated' as const,
+  })
+  assert.ok(storage.dump().has(KEY), 'precondition: there is a stored model to clear')
+
+  store.getState().resetSession()
+
+  const state = store.getState()
+  assert.equal(state.metadata.gpsLat, '19.0760', 'the draft the user typed is not part of the previous run')
+  assert.equal(state.dataConsent, true, 'consent is per browser, not per run')
+  assert.equal(state.pointCloud.length, 0)
+  assert.equal(state.metrics, null)
+  assert.equal(state.processingComplete, false)
+  assert.equal(state.videoName, null)
+  assert.equal(storage.dump().has(KEY), false)
+})
+
+test('a new run mints a new job id and starts without the previous run\u2019s data', () => {
+  const storage = fakeStorage(JSON.stringify({
+    state: {
+      processingComplete: true, pointCloud: cloudOf(2), trajectory: [], annotations: [],
+      trackedObjects: [], bounds: null, videoName: 'VIDEO-A.mp4', videoDurationSec: 30,
+      metadata: METADATA, metrics: metricsFixture(), jobId: 'job-a',
+    },
+    version: 1,
+  }))
+  const store = loadStore(storage)
+  assert.equal(store.getState().jobId, 'job-a', 'precondition: the restored run carries its identity')
+
+  store.getState().setDataConsent(true)
+  store.getState().setVideoFile(new File(['b'], 'VIDEO-B.mp4', { type: 'video/mp4' }))
+  assert.equal(store.getState().jobId, null, 'choosing a new video ends the previous session')
+  assert.equal(store.getState().validateAndStart(), true)
+
+  const jobId = store.getState().jobId
+  assert.ok(jobId, 'starting a run mints its identity')
+  assert.notEqual(jobId, 'job-a', 'and never reuses the restored one')
+  // The run is in flight; nothing in front of the user belongs to VIDEO-A.
+  assert.equal(store.getState().pointCloud.length, 0)
+  assert.equal(store.getState().metrics, null)
+  assert.equal(store.getState().processingComplete, false)
+  assert.equal(storage.dump().has(KEY), false)
+})

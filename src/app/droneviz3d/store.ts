@@ -16,6 +16,7 @@ import {
   RawFlightData, validateFlightData, ValidationResult,
 } from './validator'
 import { FlightParams } from './geometry'
+import { trace } from './trace'
 
 export type { PipelineStep, StepId, StepUpdate } from './pipeline'
 export type { Point3D, ReconstructionPose, ConfidenceAnnotation, ReconstructionMetrics } from './reconstruct'
@@ -67,6 +68,20 @@ export interface DroneVizState {
    * failure instead of an empty state. Null while a run is healthy.
    */
   pipelineError: string | null
+  /**
+   * Identity of the current run, minted when a run starts and cleared when a new
+   * session begins. Persisted with the model so a restored entry can be told
+   * apart from the run the draft in front of you would produce — and so the trace
+   * lines can name which run a number belongs to.
+   */
+  jobId: string | null
+  /**
+   * Clear the previous reconstruction from memory *and* from this browser's
+   * storage, without touching the flight-metadata draft or the consent decision.
+   * Called when a different video is chosen and at the start of every run, so no
+   * page can present the last run's model as the current one.
+   */
+  resetSession: () => void
   setVideoFile: (file: File) => void
   setVideoDuration: (sec: number) => void
   setMetadata: (meta: Partial<FlightMetadata>) => void
@@ -105,7 +120,7 @@ const initialMetadata: FlightMetadata = {
 // model. That matches the app, which keeps one reconstruction per visit.
 // ---------------------------------------------------------------------------
 
-const PERSIST_KEY = 'droneviz3d-model'
+export const PERSIST_KEY = 'droneviz3d-model'
 /**
  * localStorage gives ~5 MB per origin, shared with any other keys this site
  * uses; keep headroom so one write can never be the reason another fails.
@@ -116,8 +131,31 @@ type PersistedSlice = Pick<
   DroneVizState,
   | 'processingComplete' | 'pointCloud' | 'trajectory' | 'annotations'
   | 'metrics' | 'trackedObjects' | 'bounds' | 'videoName'
-  | 'videoDurationSec' | 'metadata'
+  | 'videoDurationSec' | 'metadata' | 'jobId'
 >
+
+/** One run's identity: time-ordered, short, and unique enough for a browser log. */
+function newJobId(): string {
+  return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffffff).toString(36)}`
+}
+
+/**
+ * The state every run starts from.
+ *
+ * Clearing the previous reconstruction here — and not only when a new file is
+ * chosen — is what stops an in-flight or failed run from being described by the
+ * last one's model and metrics. It is deliberately a single definition used by
+ * both entry points, because the two drifting apart is how this bug happened.
+ */
+function freshRunState(): Partial<DroneVizState> {
+  return {
+    validationErrors: [], isProcessing: true, processingComplete: false, pipelineError: null,
+    steps: createInitialSteps(), currentStep: 0, restoredFromStorage: false,
+    pointCloud: [], trajectory: [], annotations: [], metrics: null,
+    trackedObjects: [], bounds: null,
+    jobId: newJobId(),
+  }
+}
 
 /**
  * Points are stored as one flat array of integers — x/y/z in millimeters,
@@ -186,7 +224,14 @@ const browserStore: PersistStorage<DroneVizState> = {
     if (!raw) return null
     try {
       const parsed = JSON.parse(raw) as StorageValue<DroneVizState>
-      if (parsed?.state) parsed.state = denormalizeState(parsed.state as unknown as Record<string, unknown>) as unknown as DroneVizState
+      const slice = parsed?.state as unknown as Partial<DroneVizState> | undefined
+      if (slice) parsed.state = denormalizeState(slice as unknown as Record<string, unknown>) as unknown as DroneVizState
+      trace('storage', `read ${name}`, {
+        found: true,
+        complete: slice?.processingComplete === true,
+        videoName: slice?.videoName ?? null,
+        jobId: slice?.jobId ?? null,
+      })
       return parsed
     } catch {
       return null // corrupt entry — treat as absent
@@ -209,6 +254,12 @@ const browserStore: PersistStorage<DroneVizState> = {
         return
       }
       browserStorage.setItem(name, serialized)
+      trace('storage', `wrote ${name}`, {
+        bytes: serialized.length,
+        videoName: (state.videoName as string | null) ?? null,
+        jobId: (state.jobId as string | null) ?? null,
+        points: Array.isArray(points) ? points.length : 0,
+      })
     } catch {
       // Quota exceeded or storage disabled: the model simply won't persist.
       try { browserStorage.removeItem(name) } catch { /* ignore */ }
@@ -235,6 +286,7 @@ function sanitizePersisted(persisted: unknown): Partial<PersistedSlice> {
   if (Array.isArray(s.trackedObjects)) out.trackedObjects = s.trackedObjects
   if (s.bounds && typeof s.bounds === 'object') out.bounds = s.bounds
   if (typeof s.videoName === 'string') out.videoName = s.videoName
+  if (typeof s.jobId === 'string') out.jobId = s.jobId
   if (typeof s.videoDurationSec === 'number' && Number.isFinite(s.videoDurationSec)) out.videoDurationSec = s.videoDurationSec
   if (s.metadata && typeof s.metadata === 'object') out.metadata = s.metadata
   return out
@@ -278,6 +330,7 @@ async function runPipeline(
     get().updateStep({ stepId: id, status: 'complete', duration: durationMs })
   }
   const failStep = (id: StepId, message: string) => {
+    trace('pipeline', `run failed at ${id}`, { jobId: get().jobId, message })
     get().updateStep({ stepId: id, status: 'error', errorMessage: message })
     // processingComplete stays false: nothing was produced. The results page reads
     // `pipelineError` to say so, rather than looking like a fresh visit.
@@ -374,6 +427,7 @@ export const useDroneVizStore = create<DroneVizState>()(
       metadata: initialMetadata, validationErrors: [],
       steps: createInitialSteps(), currentStep: 0, isProcessing: false, processingComplete: false,
       pipelineError: null,
+      jobId: null,
       pointCloud: [], trajectory: [], annotations: [], metrics: null,
       trackedObjects: [], bounds: null,
       dataConsent: false,
@@ -383,18 +437,45 @@ export const useDroneVizStore = create<DroneVizState>()(
       markRestored: () => set({ restoredFromStorage: true }),
       markHydrated: () => set({ hydrated: true }),
 
+      resetSession: () => {
+        set({
+          pointCloud: [], trajectory: [], annotations: [], metrics: null,
+          trackedObjects: [], bounds: null,
+          steps: createInitialSteps(), currentStep: 0,
+          isProcessing: false, processingComplete: false, pipelineError: null,
+          restoredFromStorage: false, jobId: null,
+          // The name and the duration belong to the clip that was measured, so the
+          // next file starts from them being unknown rather than inheriting the
+          // previous one's identity.
+          videoName: null, videoDurationSec: 0,
+          // Errors were about a run that no longer exists.
+          validationErrors: [],
+        })
+        // Delete the stored entry outright. The write above already removes it —
+        // nothing persists without a finished model — but the key must not depend
+        // on that rule continuing to hold.
+        browserStore.removeItem(PERSIST_KEY)
+        trace('store', 'resetSession — previous model cleared', { removedKey: PERSIST_KEY })
+      },
+
       runSimulatedDemo: () => {
         if (get().isProcessing) return
-        set({
-          validationErrors: [], isProcessing: true, processingComplete: false, pipelineError: null,
-          steps: createInitialSteps(), currentStep: 0, restoredFromStorage: false,
+        set(freshRunState())
+        trace('pipeline', 'run started (simulated demo, user-requested)', {
+          jobId: get().jobId, videoName: get().videoName,
         })
         void runPipeline(set, get, { allowWorker: false })
       },
 
       setVideoFile: (file) => {
+        // A different video is a different run, so the previous reconstruction must
+        // not survive it — in memory or in storage. Without this the old model keeps
+        // its geometry and metrics while the stored entry is relabelled with the new
+        // file's name, and the results page presents it as this session's output.
+        get().resetSession()
         const preview = URL.createObjectURL(file)
         set({ videoFile: file, videoPreview: preview, videoName: file.name, validationErrors: [] })
+        trace('store', 'setVideoFile', { name: file.name, type: file.type, bytes: file.size })
       },
       // Some video files (e.g. MediaRecorder webm) report duration = Infinity until
       // decoded; clamp so it can never poison downstream math.
@@ -423,9 +504,9 @@ export const useDroneVizStore = create<DroneVizState>()(
 
         // A new run is by definition fresh, even if the previous model came back
         // from this browser's storage.
-        set({
-          validationErrors: [], isProcessing: true, processingComplete: false, pipelineError: null,
-          steps: createInitialSteps(), currentStep: 0, restoredFromStorage: false,
+        set(freshRunState())
+        trace('pipeline', 'run started', {
+          jobId: get().jobId, workerMode: WORKER_MODE, videoName: get().videoName,
         })
 
         // Real execution: every step is advanced by the operation it names. A
@@ -435,17 +516,24 @@ export const useDroneVizStore = create<DroneVizState>()(
         return true
       },
 
-      updateStep: (update) => set((s) => ({
-        steps: s.steps.map((step) => {
-          if (step.id !== update.stepId) return step
-          switch (update.status) {
-            case 'pending': return { ...step, state: { status: 'pending' as const, progress: 0 } }
-            case 'running': return { ...step, state: { status: 'running' as const, progress: update.progress } }
-            case 'complete': return { ...step, state: { status: 'complete' as const, progress: 100, duration: update.duration } }
-            case 'error': return { ...step, state: { status: 'error' as const, progress: step.state.progress, errorMessage: update.errorMessage } }
-          }
-        }),
-      })),
+      updateStep: (update) => {
+        trace('pipeline', `${update.stepId} → ${update.status}`, {
+          jobId: get().jobId,
+          ...('progress' in update ? { progress: update.progress } : {}),
+          ...('errorMessage' in update ? { errorMessage: update.errorMessage } : {}),
+        })
+        set((s) => ({
+          steps: s.steps.map((step) => {
+            if (step.id !== update.stepId) return step
+            switch (update.status) {
+              case 'pending': return { ...step, state: { status: 'pending' as const, progress: 0 } }
+              case 'running': return { ...step, state: { status: 'running' as const, progress: update.progress } }
+              case 'complete': return { ...step, state: { status: 'complete' as const, progress: 100, duration: update.duration } }
+              case 'error': return { ...step, state: { status: 'error' as const, progress: step.state.progress, errorMessage: update.errorMessage } }
+            }
+          }),
+        }))
+      },
 
       completeProcessingWith: (out) => set({
         isProcessing: false, processingComplete: true,
@@ -489,6 +577,7 @@ export const useDroneVizStore = create<DroneVizState>()(
         videoName: s.videoName,
         videoDurationSec: s.videoDurationSec,
         metadata: s.metadata,
+        jobId: s.jobId,
       }) as unknown as DroneVizState,
       migrate: (persisted) => sanitizePersisted(persisted) as unknown as DroneVizState,
       storage: browserStore,
