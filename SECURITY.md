@@ -48,7 +48,7 @@ stores login data only — no video, no keyframes, no reconstruction data.
 | 17 | Passwords hashed | ✅ | argon2id (m=19456 KiB, t=2, p=1 — OWASP parameters) via `@node-rs/argon2`. Verification is constant-time and failure-agnostic; hashes are never logged. |
 | 18 | SQL injection protection | ✅ | Every query is a prepared statement (`node:sqlite` built-in module — zero native deps); no string-built SQL anywhere in `src/lib/db.ts`. |
 | 19 | HTTPS enabled | ✅* | `*` Deployment-level. HSTS (preload) + `upgrade-insecure-requests` are configured and activate automatically on HTTPS hosts. Local `npm run dev` is intentionally plain HTTP on loopback. |
-| 20 | Security audit run | ✅ | `npm audit` → **0 vulnerabilities** (was 2 high). `npm run verify` = smoke + typecheck + lint + 180 tests + production build. The smoke step checks the Node version, `node:sqlite` availability and writable storage, so a mis-provisioned deployment fails clearly instead of 500-ing on the first request. Deployment-dependent items are listed in §11 rather than claimed as closed. |
+| 20 | Security audit run | ✅ | `npm audit` → **0 vulnerabilities** (was 2 high). `npm run verify` = smoke + typecheck + lint + 180 tests + production build + a served-server check. The smoke step checks the Node version, `node:sqlite` availability and writable storage, so a mis-provisioned deployment fails clearly instead of 500-ing on the first request; `npm run smoke:server` then starts the built app and asserts the pages, the API guards (401/403/405) and the production-only security headers, so a change that breaks responses cannot land behind a green build. Deployment-dependent items are listed in §11 rather than claimed as closed. |
 
 ## 7. Content Security Policy (production)
 
@@ -204,6 +204,7 @@ npx tsc --noEmit          # clean
 npm run lint              # clean
 npm test                  # 180 tests
 npm run build             # production build passes
+npm run smoke:server      # starts the built server; 10 page/API/header checks
 npm run verify            # all of the above, in order
 ```
 

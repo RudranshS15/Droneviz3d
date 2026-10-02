@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "test": "node -e \"require('fs').rmSync('.test-build',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \".test-build/tests/*.test.js\"",
     "smoke": "node scripts/smoke.mjs",
-    "verify": "npm run smoke && npm run typecheck && npm run lint && npm run test && npm run build"
+    "smoke:server": "node scripts/smoke-server.mjs",
+    "verify": "npm run smoke && npm run typecheck && npm run lint && npm run test && npm run build && npm run smoke:server"
   },
   "engines": {
     "node": ">=22.5.0"

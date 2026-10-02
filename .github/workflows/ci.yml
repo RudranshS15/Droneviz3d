@@ -1,12 +1,16 @@
 name: CI
 
 # Runs the same gate the project expects locally (`npm run verify`), so a change
-# that breaks types, lint, the characterisation tests, or the production build
-# cannot land unnoticed.
+# that breaks the runtime preconditions, types, lint, the characterisation tests,
+# or the production build cannot land unnoticed.
 #
-# Browser checks (viewer framing and layers, the results states) are not
-# automated yet — they need a headless browser suite. Until then they are run
-# manually against `npm run dev`; see docs/ARCHITECTURE-AUDIT.md.
+# The last step is not a compiler check: it starts the built server and exercises
+# it — pages, API contracts, the production-only security headers — so a change
+# that breaks responses is caught even when the build is fine.
+#
+# Browser checks (viewer framing and layers, the results states) are still not
+# automated — they need a headless browser suite. Until then they are run
+# manually against `npm run dev`; see ARCHITECTURE.md §8.
 on:
   push:
     branches: [main]
@@ -22,7 +26,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run smoke
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test
       - run: npm run build
+      - run: npm run smoke:server

@@ -202,8 +202,10 @@ runner — no browser, no extra framework.
 | `results-view.test.ts` | Every status state and the measured/estimated split |
 | `store-persistence.test.ts` | Compact encode/decode round-trip, oversized-model degradation, a draft writing nothing, a later visit restoring a stored model, Reset erasing it for good |
 
-`npm run verify` runs typecheck + lint + test. CI (`.github/workflows/ci.yml`) requires all
-three on every push, so the orientation and framing contracts cannot silently regress.
+`npm run verify` runs smoke + typecheck + lint + test + build, then starts the built server
+and checks its responses (`npm run smoke:server`). CI (`.github/workflows/ci.yml`) runs the
+same steps on every push, so the orientation and framing contracts cannot silently regress —
+and neither can the pages, the API guards or the security headers.
 
 ---
 
