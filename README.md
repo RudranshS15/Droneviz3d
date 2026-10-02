@@ -31,6 +31,29 @@ or a script refused for being served as `text/plain`).
 Both commands default to port 3000, so to serve a production build beside a
 running dev server, pick another port: `npm start -- -p 3100`.
 
+## Storage layout
+
+On this workstation the checkout is stored on `D:\DroneViz3D`; its original path
+becomes a directory junction to that copy after the one-time `--finish` step
+below (C: is nearly full and D: has room). Nothing else has to change, because
+the path does not.
+
+`scripts/move-project-to-d.mjs` does the move in two resumable phases: the
+default copies and then verifies every file, skipping whatever already matches;
+`--finish` renames the original aside, creates the junction, and deletes the old
+copy. Re-running either phase is always safe. `--finish` requires the app that
+owns the folder (Freebuff) to be closed — Windows cannot rename a directory any
+process has open — and reports that instead of half-doing the swap.
+`scripts/move-project-to-d.cmd` is the double-click wrapper for it.
+
+    node scripts/move-project-to-d.mjs           # copy / re-sync, safe at any time
+    scripts\move-project-to-d.cmd                # swap, with Freebuff closed
+
+Link the project root only — never `node_modules` or `.next`. Next rewrites
+paths it resolves through a subdirectory link and the build dies with
+`Can't resolve './D:/…/node_modules/next/…'`. On a fresh clone none of this
+applies: `npm install && npm run dev` works anywhere.
+
 ## Tech Stack
 - Next.js 15 + React 19
 - Tailwind CSS
