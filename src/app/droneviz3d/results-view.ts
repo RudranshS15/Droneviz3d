@@ -172,14 +172,16 @@ export function buildMetricGroups(input: MetricInput): MetricGroups {
       id: 'sampledKeyframes', label: 'Keyframes sampled',
       // Persisted metrics from an earlier session may predate this field.
       value: metrics.keyframesSampled ?? 'n/a',
-      note: 'frames sent to the grounding model for this pass',
+      note: metrics.keyframesExtracted
+        ? `${metrics.keyframesExtracted} actually decoded from the upload`
+        : 'frames sent to the grounding model for this pass',
     },
     {
       id: 'groundingSource', label: 'Detections from',
       // Persisted metrics from an earlier session may predate this field.
       value: metrics.groundingSource ?? 'unknown source',
       note: metrics.groundingSource && /simulated/i.test(metrics.groundingSource)
-        ? 'no model was run — the scene shown is illustrative, not observed'
+        ? (metrics.synthesisBasis ?? 'no model was run — the scene shown is illustrative, not observed')
         : 'the LocateAnything-3B worker produced these detections',
     },
   ]

@@ -317,7 +317,7 @@ export default function ResultsPage() {
               <MetricGroup
                 title="Measured from your upload"
                 subtitle={metrics && /simulated/i.test(metrics.groundingSource ?? '')
-                  ? 'Counts from the simulated grounding step — no model was run for this result.'
+                  ? `Counts from the simulated grounding step — no model was run for this result.${metrics.synthesisBasis ? ` ${metrics.synthesisBasis}` : ''}`
                   : 'Counts of what the grounding model actually detected in the sampled keyframes.'}
                 entries={groups.measured}
                 tone="measured"

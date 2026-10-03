@@ -205,8 +205,8 @@ export default function ProcessingPage() {
               </button>
             </div>
             <p className="text-[11px] text-[#a8a29e] mt-3 leading-relaxed">
-              The simulated demo generates an illustrative scene from your flight metadata without a model. Its
-              result is labelled as simulated everywhere it appears.
+              The simulated demo generates an illustrative scene seeded from this clip and your flight metadata,
+              without a model. Its result is labelled as simulated everywhere it appears.
             </p>
           </div>
         )}

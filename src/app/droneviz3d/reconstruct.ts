@@ -81,8 +81,22 @@ export interface ReconstructionMetrics {
   groundedLabels: string
   /** how many keyframes were sampled for grounding (a measured input) */
   keyframesSampled: string
+  /**
+   * How many keyframes were actually decoded from the upload. `keyframesSampled`
+   * is the plan (a constant 24); this is what the decoder returned, so a clip the
+   * browser could only partly seek shows up as fewer frames rather than as a
+   * silent assumption that all 24 existed. Added by the store, which is where
+   * the decode result is known; `'n/a (no decode)'` in simulated mode.
+   */
+  keyframesExtracted?: string
   /** where the detections came from — the model, or the simulated adapter */
   groundingSource: string
+  /**
+   * For simulated runs: what the illustrative scene was actually seeded from.
+   * Present only when the detections are simulated, so a real-model run never
+   * claims a synthesized seed — the honesty rule runs in both directions.
+   */
+  synthesisBasis?: string
   /**
    * One sentence naming what was measured and what was synthesized, so no
    * consumer has to infer it from the geometry. Object positions and extents
@@ -434,7 +448,7 @@ export function reconstruct(input: ReconstructInput): ReconstructOutput {
     synthesis: SYNTHESIS_NOTE,
     provenance: source === 'locateanything-3b'
       ? 'Detections from LocateAnything-3B; geometry synthesised from them + flight metadata'
-      : 'Simulated detections + flight metadata (illustrative scene, no model was run)',
+      : 'Simulated detections seeded from your flight metadata + this clip (illustrative scene, no model was run)',
   }
 
   // 5. Georeferenced bounds from the scene geometry itself, not the trajectory.

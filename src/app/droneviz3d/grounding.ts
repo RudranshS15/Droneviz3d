@@ -26,6 +26,7 @@ import {
   hashString, mulberry32, rayThroughImagePoint, intersectGround,
   groundDistance, poseAt, cameraFov,
 } from './geometry'
+import { simulatedSeedSource } from './video-fingerprint'
 
 // ---------- LocateAnything output types ----------
 
@@ -302,6 +303,13 @@ export interface GroundingResponse {
   raw?: string
   /** inference backend used */
   source: 'locateanything-3b' | 'simulated'
+  /**
+   * For simulated responses: the exact string the scene was seeded from. The
+   * metadata half is short and greppable; the clip half is a one-way digest of
+   * sampled bytes, so it can be carried into metrics and exports without
+   * holding anything of the video. Absent for real-model responses.
+   */
+  synthesisSeed?: string
 }
 
 /**
@@ -315,14 +323,39 @@ export type LocateAnythingAdapter = (
 // ---------- Simulated adapter (same interface, deterministic) ----------
 
 /**
+ * One sentence naming what a simulated scene was seeded from. Shown on the
+ * results page and written into exports, so the illustrative nature of the
+ * detections travels with the artifact instead of living only in this comment.
+ */
+export function simulatedGroundingBasis(videoFingerprint: string | null): string {
+  return videoFingerprint
+    ? `Simulated adapter (no model was run): an illustrative scene seeded from this clip's sampled bytes (SHA-256 ${videoFingerprint.slice(0, 12)}…) and your flight metadata — not detections.`
+    : 'Simulated adapter (no model was run): an illustrative scene seeded from your flight metadata alone — not detections.'
+}
+
+/**
  * Deterministic scene generator that mimics what LocateAnything-3B would detect
  * on a drone keyframe: building footprints and vehicles arranged in blocks.
  * Produces synthetic raw output strings in the exact PBD token format, then runs
  * them through the real parser — so swapping in the real model changes nothing
  * downstream.
+ *
+ * `videoFingerprint` is the uploaded clip's `VideoFingerprint.hex`, and it is
+ * what makes two different clips produce two different scenes. Without it the
+ * seed is the flight metadata alone, which is why two takes of one survey used
+ * to reconstruct identically — and why that looked like a cached result. Null is
+ * the honest fallback for a run with no file in hand (a restored session, or a
+ * user-requested demo), and reproduces the metadata-only scene exactly.
  */
-export function createSimulatedLocateAnythingAdapter(flight: FlightParams): LocateAnythingAdapter {
-  const seed = hashString(`${flight.gpsLat.toFixed(6)},${flight.gpsLng.toFixed(6)},${flight.altitude},${flight.heading}`)
+export function createSimulatedLocateAnythingAdapter(
+  flight: FlightParams,
+  videoFingerprint: string | null = null
+): LocateAnythingAdapter {
+  const seedSource = simulatedSeedSource(
+    `${flight.gpsLat.toFixed(6)},${flight.gpsLng.toFixed(6)},${flight.altitude},${flight.heading}`,
+    videoFingerprint
+  )
+  const seed = hashString(seedSource)
   const rand = mulberry32(seed)
 
   // Deterministic scene: grid of building blocks + scattered vehicles.
@@ -389,7 +422,7 @@ export function createSimulatedLocateAnythingAdapter(flight: FlightParams): Loca
       void LABELS
 
       const parsed = parseLocateAnythingOutput(raw, req.keyframeIndex, req.labels)
-      return { ...parsed, raw, source: 'simulated' as const }
+      return { ...parsed, raw, source: 'simulated' as const, synthesisSeed: seedSource }
     })
 }
 

@@ -10,8 +10,9 @@ import {
 } from './reconstruct'
 import {
   createSimulatedLocateAnythingAdapter, createLocateAnythingAdapter,
-  extractKeyframes, planKeyframes, GroundingResponse,
+  extractKeyframes, planKeyframes, GroundingResponse, simulatedGroundingBasis,
 } from './grounding'
+import { fingerprintVideoFile } from './video-fingerprint'
 import {
   RawFlightData, validateFlightData, ValidationResult,
 } from './validator'
@@ -354,6 +355,11 @@ async function runPipeline(
   }
   const labels = ['building', 'vehicle', 'tree'] as const
   const useWorker = allowWorker && WORKER_MODE
+  // Read from the upload when there is one. The seed used to be the flight
+  // metadata alone, so two clips flown over the same way produced identical
+  // scenes and a genuinely fresh run was indistinguishable from a stale one.
+  // Null only when there is no file to read: an honest fallback, not a silent one.
+  let videoFingerprint: string | null = null
   let t0 = Date.now()
 
   try {
@@ -365,6 +371,12 @@ async function runPipeline(
         throw new Error('The video file is no longer in this tab, so keyframes cannot be extracted. Re-upload the video to run worker-mode grounding.')
       }
       frames = await extractKeyframes(videoFile, keyframePlan.times.map((t) => t * durationSec))
+    } else if (videoFile) {
+      // Simulated mode reads the clip itself, not just the metadata, so two
+      // different videos never reconstruct to the same scene. It is a few reads
+      // of local bytes (never the whole file, nothing sent anywhere) and it is
+      // what makes "upload a different video" actually change the result.
+      videoFingerprint = (await fingerprintVideoFile(videoFile)).hex
     }
     completeStep('extract', Date.now() - t0)
 
@@ -387,7 +399,7 @@ async function runPipeline(
         })
       }
     } else {
-      responses = await createSimulatedLocateAnythingAdapter(flightParams)(
+      responses = await createSimulatedLocateAnythingAdapter(flightParams, videoFingerprint)(
         keyframePlan.times.map((_, i) => ({ image: new Blob(), keyframeIndex: i, labels: [...labels] }))
       )
     }
@@ -408,10 +420,21 @@ async function runPipeline(
         if (next) startStep(next)
       },
     })
-    // The export payload exists as soon as the result does. No file has been
-    // written yet, which is what the step name says.
+    // The export payload exists as soon as the result does. The keyframe count
+    // and the simulated seed basis are measured inputs, not synthesis output, so
+    // they are added to the metrics here rather than guessed at inside
+    // reconstruct().
     completeStep('export', Date.now() - t0)
-    get().completeProcessingWith(out)
+    get().completeProcessingWith({
+      ...out,
+      metrics: {
+        ...out.metrics,
+        keyframesExtracted: useWorker && frames.length > 0 ? String(frames.length) : 'n/a (no decode)',
+        ...(out.groundingSource === 'simulated'
+          ? { synthesisBasis: simulatedGroundingBasis(videoFingerprint) }
+          : {}),
+      },
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     failStep(current, useWorker
