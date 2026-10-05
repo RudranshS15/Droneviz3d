@@ -12,6 +12,7 @@ import { countByBand } from '../confidence'
 import { buildMetricGroups, deriveReconstructionStatus, type MetricEntry, type StatusTone } from '../results-view'
 import { WORKER_MODE, PERSIST_KEY } from '../store'
 import { persistedModelInfo, useTracePage } from '../trace'
+import { BlurFade, NumberTicker, ShineBorder } from '../ui'
 
 const TONE_CLASSES: Record<StatusTone, string> = {
   neutral: 'border-[#292524] bg-[#1c1917]/30',
@@ -119,7 +120,12 @@ function MetricGroup({
 }: { title: string; subtitle: string; entries: MetricEntry[]; tone: 'measured' | 'estimated' }) {
   return (
     <section className="p-5 rounded-2xl bg-[#1c1917]/20 border border-[#292524]">
-      <div className="flex items-baseline justify-between gap-3 mb-1">
+      <ShineBorder
+        borderWidth={1}
+        duration={16}
+        shineColor={tone === 'measured' ? ['#4d7c5e', '#8fb79c'] : ['#c27a3a', '#d4a053']}
+      />
+      <div className="relative flex items-baseline justify-between gap-3 mb-1">
         <h3 className="text-[13px] font-semibold text-[#e7e5e4]">{title}</h3>
         <span
           className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded font-mono ${
@@ -129,7 +135,7 @@ function MetricGroup({
           {tone}
         </span>
       </div>
-      <p className="text-[11px] text-[#a8a29e] mb-4">{subtitle}</p>
+      <p className="relative text-[11px] text-[#a8a29e] mb-4">{subtitle}</p>
       {entries.length === 0 ? (
         <p className="text-[11px] text-[#a8a29e]">Nothing to report.</p>
       ) : (
@@ -302,8 +308,15 @@ export default function ResultsPage() {
           </div>
           {status.canExport && (
             <div className="flex flex-wrap gap-4 mt-3 text-[11px] text-[#a8a29e] font-mono">
-              <span>{sceneModel.points.length.toLocaleString()} model points</span>
-              <span>{sceneModel.objects.length} grounded objects</span>
+              {/* The two counts a reader looks for are counted up; the pose count
+                  and the coordinate are left alone — a ticking coordinate would
+                  be an animation pretending to be a measurement. */}
+              <span>
+                <NumberTicker value={sceneModel.points.length} className="text-[11px] text-[#a8a29e]" /> model points
+              </span>
+              <span>
+                <NumberTicker value={sceneModel.objects.length} className="text-[11px] text-[#a8a29e]" /> grounded objects
+              </span>
               <span>{sceneModel.trajectoryPath.length} flight poses</span>
               {bounds && <span>georeferenced to {metadata.gpsLat}, {metadata.gpsLng}</span>}
             </div>
@@ -313,21 +326,27 @@ export default function ResultsPage() {
         {/* Metrics, split by how they were obtained */}
         {metrics && (
           <>
+            {/* The two groups arrive staggered, which is also the order they
+                should be read in: what was measured, then what was inferred. */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
-              <MetricGroup
-                title="Measured from your upload"
-                subtitle={metrics && /simulated/i.test(metrics.groundingSource ?? '')
-                  ? `Counts from the simulated grounding step — no model was run for this result.${metrics.synthesisBasis ? ` ${metrics.synthesisBasis}` : ''}`
-                  : 'Counts of what the grounding model actually detected in the sampled keyframes.'}
-                entries={groups.measured}
-                tone="measured"
-              />
-              <MetricGroup
-                title="Estimated by the pipeline"
-                subtitle="Numbers that come out of the geometry synthesis step. They describe the generated model, not the real world."
-                entries={groups.estimated}
-                tone="estimated"
-              />
+              <BlurFade inView delay={0}>
+                <MetricGroup
+                  title="Measured from your upload"
+                  subtitle={metrics && /simulated/i.test(metrics.groundingSource ?? '')
+                    ? `Counts from the simulated grounding step — no model was run for this result.${metrics.synthesisBasis ? ` ${metrics.synthesisBasis}` : ''}`
+                    : 'Counts of what the grounding model actually detected in the sampled keyframes.'}
+                  entries={groups.measured}
+                  tone="measured"
+                />
+              </BlurFade>
+              <BlurFade inView delay={0.12}>
+                <MetricGroup
+                  title="Estimated by the pipeline"
+                  subtitle="Numbers that come out of the geometry synthesis step. They describe the generated model, not the real world."
+                  entries={groups.estimated}
+                  tone="estimated"
+                />
+              </BlurFade>
             </div>
 
             <div className="mb-8 p-4 rounded-xl border border-[#c27a3a]/30 bg-[#c27a3a]/[0.06]" role="note">

@@ -7,6 +7,7 @@ import { mulberry32 } from './geometry'
 import { buildHeroField, heroFieldSize, pointMaterial, projectField } from './hero-points'
 import { STEP_DEFINITIONS } from './pipeline'
 import { colors } from './tokens'
+import { AnimatedShinyText, BorderBeam, GridPattern, NumberTicker, ShineBorder } from './ui'
 
 /**
  * The demo's labels come from the pipeline definition itself, so the count in
@@ -115,6 +116,15 @@ function HeroPointField() {
   )
 }
 
+/**
+ * The shine ring on the eyebrow badge. Split out so the badge's own stacking
+ * context stays readable: ShineBorder positions itself `absolute inset-0`, and
+ * inline it would sit under the badge's text in the same layer.
+ */
+function ShineRing() {
+  return <ShineBorder borderWidth={1} duration={9} shineColor={['#22d3ee', '#38bdf8', '#0ea5e9']} />
+}
+
 function PipelineDemo() {
   const [step, setStep] = useState(0)
   const [visible, setVisible] = useState(false)
@@ -147,7 +157,7 @@ function PipelineDemo() {
             <li key={label} className="flex-1 flex flex-col items-center gap-2">
               <div
                 aria-hidden="true"
-                className={`w-full h-10 rounded-lg flex items-center justify-center text-[11px] font-semibold transition-all duration-500 ${
+                className={`relative overflow-hidden w-full h-10 rounded-lg flex items-center justify-center text-[11px] font-semibold transition-all duration-500 ${
                   active
                     ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-lg shadow-cyan-500/10'
                     : done
@@ -155,7 +165,8 @@ function PipelineDemo() {
                     : 'bg-white/[0.03] text-white/20 border border-white/[0.04]'
                 }`}
               >
-                {done ? '✓' : active ? '⟳' : i + 1}
+                {active && <BorderBeam size={40} duration={4} colorFrom="#67e8f9" colorTo="#0ea5e9" />}
+                <span className="relative z-10">{done ? '✓' : active ? '⟳' : i + 1}</span>
               </div>
               <span className={`text-[10px] font-medium text-center leading-tight transition-colors duration-500 ${active ? 'text-cyan-300' : done ? 'text-[#a8a29e]' : 'text-white/45'}`}>
                 {label}
@@ -337,13 +348,13 @@ export default function LandingPage() {
     <div>
       {/* Hero — wisprflow-style bold */}
       <section className="relative min-h-[90vh] flex flex-col items-center justify-center text-center px-4 overflow-hidden">
-        {/* Grid bg */}
-        <div
-          className="absolute inset-0 opacity-[0.02]"
-          style={{
-            backgroundImage: 'linear-gradient(rgba(56,189,248,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,0.6) 1px, transparent 1px)',
-            backgroundSize: '80px 80px',
-          }}
+        {/* Grid bg — an SVG pattern rather than two stacked linear-gradients, so
+            the squares can be individually lit where the copy needs emphasis. */}
+        <GridPattern
+          width={80}
+          height={80}
+          className="stroke-[#38bdf8]/[0.14] fill-[#38bdf8]/[0.05] [mask-image:radial-gradient(ellipse_at_50%_35%,#000_35%,transparent_78%)]"
+          squares={[[6, 2], [9, 2], [7, 5], [12, 3], [4, 4]]}
         />
 
         {/* Point field — the only ambient effect on this page */}
@@ -351,9 +362,12 @@ export default function LandingPage() {
 
         <div className="relative z-10 max-w-5xl">
           <div className={`transition-all duration-700 ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/[0.08] border border-cyan-500/20 text-cyan-300 text-[12px] font-medium mb-8">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" aria-hidden="true" />
-              Smart India Hackathon 2026 &middot; SIH26158
+            <div className="relative inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/[0.08] border border-cyan-500/20 text-cyan-300 text-[12px] font-medium mb-8 overflow-hidden">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 motion-safe:animate-pulse" aria-hidden="true" />
+              <AnimatedShinyText className="text-cyan-200 via-cyan-100/90 [text-shadow:0_0_12px_rgba(34,211,238,0.35)]">
+                Smart India Hackathon 2026 &middot; SIH26158
+              </AnimatedShinyText>
+              <ShineRing />
             </div>
           </div>
 
@@ -376,9 +390,10 @@ export default function LandingPage() {
           <div className={`flex flex-col sm:flex-row items-center justify-center gap-3 transition-all duration-700 delay-300 ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
             <Link
               href="/droneviz3d/upload"
-              className="px-7 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-[15px] shadow-xl shadow-cyan-500/20 hover:shadow-cyan-500/30 hover:scale-[1.02] transition-all duration-200"
+              className="relative overflow-hidden px-7 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-[15px] shadow-xl shadow-cyan-500/20 hover:shadow-cyan-500/30 hover:scale-[1.02] transition-all duration-200"
             >
-              Upload Drone Video →
+              <BorderBeam size={90} duration={7} colorFrom="#a5f3fc" colorTo="#22d3ee" borderWidth={1} />
+              <span className="relative z-10">Upload Drone Video →</span>
             </Link>
             <Link
               href="/droneviz3d/viewer"
@@ -394,17 +409,23 @@ export default function LandingPage() {
             so there is nothing to sign up for before you upload.
           </p>
 
-          {/* Stats strip */}
+          {/* Stats strip. The two numeric values count up; the two that are not
+              numbers (100%, WGS84) are not fed through a ticker that would have
+              to pretend they are. */}
           <dl className={`grid grid-cols-2 sm:grid-cols-4 gap-6 mt-16 transition-all duration-700 delay-500 motion-reduce:transition-none ${heroVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-            {[
-              { value: '1', label: 'Flight Pass' },
-              { value: '24', label: 'Grounded Keyframes' },
-              { value: '100%', label: 'On-Device Processing' },
-              { value: 'WGS84', label: 'Georeferenced Output' },
-            ].map((s) => (
+            {([
+              { value: '1', label: 'Flight Pass', count: 1, suffix: '' },
+              { value: '24', label: 'Grounded Keyframes', count: 24, suffix: '' },
+              { value: '100%', label: 'On-Device Processing', count: null, suffix: '' },
+              { value: 'WGS84', label: 'Georeferenced Output', count: null, suffix: '' },
+            ] as const).map((s) => (
               <div key={s.label}>
                 <dt className="sr-only">{s.label}</dt>
-                <dd className="text-3xl sm:text-4xl font-black tracking-tight text-white/90">{s.value}</dd>
+                <dd className="text-3xl sm:text-4xl font-black tracking-tight text-white/90">
+                  {s.count === null
+                    ? s.value
+                    : <NumberTicker value={s.count} className="text-3xl sm:text-4xl font-black tracking-tight text-white/90" />}
+                </dd>
                 <dd className="text-[12px] text-[#a8a29e] mt-1 font-medium">{s.label}</dd>
               </div>
             ))}
@@ -522,9 +543,10 @@ export default function LandingPage() {
             </p>
             <Link
               href="/droneviz3d/upload"
-              className="inline-flex px-8 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-[15px] shadow-xl shadow-cyan-500/20 hover:shadow-cyan-500/30 hover:scale-[1.02] transition-all duration-200"
+              className="relative inline-flex px-8 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-[15px] shadow-xl shadow-cyan-500/20 hover:shadow-cyan-500/30 hover:scale-[1.02] transition-all duration-200"
             >
-              Start Processing →
+              <BorderBeam size={80} duration={6} colorFrom="#a5f3fc" colorTo="#22d3ee" />
+              <span className="relative z-10">Start Processing →</span>
             </Link>
           </div>
         </div>

@@ -411,6 +411,23 @@ export default function ViewerPage() {
         >
           <canvas ref={canvasRef} className="block" aria-hidden="true" />
 
+          {/* Corner brackets — a survey-viewfinder frame around the model. Four
+              inert L-shapes, drawn in SVG so they scale with the panel without
+              a background image or a second canvas over the WebGL one. */}
+          <svg
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-3 h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)]"
+            preserveAspectRatio="none"
+            viewBox="0 0 100 100"
+          >
+            <g stroke="#c27a3a" strokeOpacity="0.35" strokeWidth="1.5" fill="none" vectorEffect="non-scaling-stroke">
+              <path d="M0 8 V0 H8" />
+              <path d="M92 0 H100 V8" />
+              <path d="M100 92 V100 H92" />
+              <path d="M8 100 H0 V92" />
+            </g>
+          </svg>
+
           <div className="absolute bottom-4 left-4 flex flex-wrap items-center gap-2 pointer-events-none">
             <div className="px-3 py-1.5 rounded-lg bg-black/70 backdrop-blur-sm text-[11px] text-[#e7e5e4] font-mono">
               Drag to orbit · Scroll to zoom · Click a marker to inspect

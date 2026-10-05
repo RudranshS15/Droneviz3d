@@ -7,6 +7,7 @@ import { useDroneVizStore, STEP_META, isRunning, isComplete, isError, getProgres
 import { deriveSessionStatus, type SessionStateId } from '../session-status'
 import { SessionStatusBar } from '../session-status-bar'
 import { persistedModelInfo, useTracePage } from '../trace'
+import { BorderBeam } from '../ui'
 
 /** Heading per state, so the page never claims more than the store knows. */
 const HEADINGS: Record<SessionStateId, string> = {
@@ -141,12 +142,24 @@ export default function ProcessingPage() {
                     />
                   </span>
                 </div>
-                <div className={`flex-1 min-w-0 mb-3 p-5 rounded-xl border transition-all duration-300 ${
+                <div className={`relative flex-1 min-w-0 mb-3 p-5 rounded-xl border transition-all duration-300 ${
                   running ? 'bg-[#c27a3a]/[0.03] border-[#c27a3a]/15 shadow-lg shadow-[#c27a3a]/5'
                   : done ? 'bg-[#1c1917]/20 border-[#4d7c5e]/40'
                   : errored ? 'bg-red-500/[0.05] border-red-500/40'
                   : 'bg-[#1c1917]/10 border-[#292524]'
                 }`}>
+                  {/* The beam marks the step that is running right now. It is
+                      `active` only while that step is genuinely running, so a
+                      stalled or failed step shows a still card, not a moving
+                      one that would imply work still happening. */}
+                  <BorderBeam
+                    active={running}
+                    size={70}
+                    duration={5}
+                    colorFrom="#d4a053"
+                    colorTo="#c27a3a"
+                    borderWidth={1}
+                  />
                   <div className="flex items-center justify-between mb-1">
                     <span className={`text-[14px] font-semibold ${running ? 'text-[#d4a053]' : done ? 'text-[#e7e5e4]' : errored ? 'text-red-300' : 'text-[#a8a29e]/60'}`} style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                       {step.name}

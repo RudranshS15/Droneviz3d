@@ -8,6 +8,7 @@ import { deriveSessionStatus } from '../session-status'
 import { SessionStatusBar } from '../session-status-bar'
 import { persistedModelInfo, useTracePage } from '../trace'
 import { videoFileError } from '../video-file'
+import { GridPattern, PulsatingButton, ShineBorder } from '../ui'
 
 export default function UploadPage() {
   const router = useRouter()
@@ -180,19 +181,39 @@ export default function UploadPage() {
               ) : (
                 <label
                   htmlFor="video-input"
-                  className={`flex flex-col items-center justify-center py-20 px-6 rounded-2xl border-2 border-dashed cursor-pointer transition-all duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-[#d4a053] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[#0c0a09] ${
+                  className={`relative overflow-hidden flex flex-col items-center justify-center py-20 px-6 rounded-2xl border-2 border-dashed cursor-pointer transition-all duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-[#d4a053] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[#0c0a09] ${
                     dragOver ? 'border-cyan-400 bg-cyan-500/[0.05]' : 'border-white/[0.14] hover:border-white/[0.25] bg-white/[0.02]'
                   }`}
                 >
-                  <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.1] flex items-center justify-center mb-4" aria-hidden="true">
+                  {/* A grid inside the empty zone, so the largest empty area on
+                      the page reads as a survey grid rather than a hole. It is
+                      hidden once a video is in place — there it would compete
+                      with the preview. */}
+                  <GridPattern
+                    width={44}
+                    height={44}
+                    className="stroke-[#c27a3a]/[0.16] fill-[#c27a3a]/[0.06] [mask-image:radial-gradient(ellipse_at_center,#000_30%,transparent_75%)]"
+                    squares={[[3, 3], [7, 2], [5, 6], [9, 5], [12, 3], [10, 8]]}
+                  />
+                  {/* The shine sweeps while the zone is empty; on drag-over the
+                      border itself goes cyan and a second sweep would be noise. */}
+                  {!dragOver && (
+                    <ShineBorder
+                      borderWidth={1}
+                      duration={11}
+                      shineColor={['#c27a3a', '#d4a053', '#7c4a22']}
+                      className="rounded-2xl"
+                    />
+                  )}
+                  <div className="relative w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.1] flex items-center justify-center mb-4" aria-hidden="true">
                     <svg className="w-8 h-8 text-[#a8a29e]" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                     </svg>
                   </div>
-                  <div className="text-[#e7e5e4] font-medium text-[15px] mb-1">
+                  <div className="relative text-[#e7e5e4] font-medium text-[15px] mb-1">
                     Drop drone video here or click to browse
                   </div>
-                  <div className="text-[#a8a29e] text-[12px]">
+                  <div className="relative text-[#a8a29e] text-[12px]">
                     Supports MP4, MOV, AVI, MKV — 1080p or 4K recommended
                   </div>
                 </label>
@@ -224,8 +245,7 @@ export default function UploadPage() {
             {/* Video Info */}
             {videoFile && (
               <div className="grid grid-cols-3 gap-3">
-                {[
-                  { label: 'File Size', value: `${(videoFile.size / (1024 * 1024)).toFixed(1)} MB` },
+                {[                    { label: 'File Size', value: `${(videoFile.size / (1024 * 1024)).toFixed(1)} MB` },
                   { label: 'Format', value: videoFile.type.split('/')[1]?.toUpperCase() || 'Video' },
                   { label: 'Name', value: videoFile.name.length > 20 ? videoFile.name.slice(0, 20) + '…' : videoFile.name },
                 ].map((info) => (
@@ -357,20 +377,29 @@ export default function UploadPage() {
                 </ul>
               )}
 
-              {/* Start Button */}
-              <button
-                type="button"
-                onClick={handleStart}
-                disabled={!videoFile}
-                aria-disabled={!videoFile}
-                className={`w-full py-3.5 rounded-xl font-semibold text-[15px] transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a053] ${
-                  videoFile
-                    ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-xl shadow-cyan-500/15 hover:shadow-cyan-500/25 hover:scale-[1.01]'
-                    : 'bg-white/[0.06] text-white/40 cursor-not-allowed border border-white/[0.08]'
-                }`}
-              >
-                {videoFile ? 'Start 3D Reconstruction' : 'Upload a video to continue'}
-              </button>
+              {/* Start Button. The pulse is on the enabled state only: a pulsing
+                  disabled button would advertise an action that cannot be taken. */}
+              {videoFile ? (
+                <PulsatingButton
+                  type="button"
+                  onClick={handleStart}
+                  pulseColor="rgba(34,211,238,0.45)"
+                  distance="7px"
+                  duration="2.2s"
+                  className="w-full py-3.5 font-semibold text-[15px] bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-xl shadow-cyan-500/15 hover:shadow-cyan-500/25 hover:scale-[1.01] transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a053]"
+                >
+                  Start 3D Reconstruction
+                </PulsatingButton>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  className="w-full py-3.5 rounded-xl font-semibold text-[15px] bg-white/[0.06] text-white/40 cursor-not-allowed border border-white/[0.08]"
+                >
+                  Upload a video to continue
+                </button>
+              )}
             </div>
           </div>
         </div>
