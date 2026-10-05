@@ -3,10 +3,9 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useDroneVizStore, STEP_META, isRunning, isComplete, isError, getProgress, PERSIST_KEY } from '../store'
+import { useDroneVizStore, STEP_META, isRunning, isComplete, isError, getProgress } from '../store'
 import { deriveSessionStatus, type SessionStateId } from '../session-status'
 import { SessionStatusBar } from '../session-status-bar'
-import { persistedModelInfo, useTracePage } from '../trace'
 import { BorderBeam } from '../ui'
 
 /** Heading per state, so the page never claims more than the store knows. */
@@ -31,7 +30,7 @@ export default function ProcessingPage() {
   const router = useRouter()
   const {
     processingComplete, isProcessing, steps, videoFile, hydrated, pipelineError, pointCloud,
-    jobId, runSimulatedDemo, validateAndStart,
+    runSimulatedDemo, validateAndStart,
   } = useDroneVizStore()
 
   // The same derivation the rail below uses, so the heading, the chip and the bar
@@ -43,16 +42,6 @@ export default function ProcessingPage() {
     pipelineError,
     steps,
     pointCount: pointCloud.length,
-  })
-
-  useTracePage('processing', {
-    jobId,
-    state: status.id,
-    step: status.stepName,
-    percent: status.percent,
-    readsFromStore: ['steps', 'isProcessing', 'processingComplete', 'pipelineError', 'pointCloud', 'videoFile', 'jobId'],
-    readKeys: [PERSIST_KEY],
-    stored: persistedModelInfo(PERSIST_KEY),
   })
 
   // A restored session has no File object (videoFile is never persisted), so a

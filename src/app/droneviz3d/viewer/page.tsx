@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useDroneVizStore, PERSIST_KEY } from '../store'
-import { persistedModelInfo, useTracePage } from '../trace'
+import { useDroneVizStore } from '../store'
 import { buildSceneModel } from '../scene'
 import { ColorMode, VIEWER_PALETTE, renderScene } from '../viewer-render'
 import { CONFIDENCE_BANDS, bandFor } from '../confidence'
@@ -19,20 +18,14 @@ const DEFAULT_ELEVATION = degToRad(28)
 export default function ViewerPage() {
   const router = useRouter()
   const {
-    pointCloud, processingComplete, trackedObjects, trajectory, metadata, hydrated,
-    jobId, videoName, pipelineError,
+    pointCloud, processingComplete, trackedObjects, trajectory, metadata, hydrated, metrics,
   } = useDroneVizStore()
 
-  useTracePage('viewer', {
-    jobId,
-    readsFromStore: ['pointCloud', 'trajectory', 'trackedObjects', 'metadata', 'processingComplete', 'jobId'],
-    readKeys: [PERSIST_KEY],
-    stored: persistedModelInfo(PERSIST_KEY),
-    videoName,
-    points: pointCloud.length,
-    complete: processingComplete,
-    error: pipelineError,
-  })
+  // True when the detections came from the built-in simulator rather than the
+  // LocateAnything-3B worker. A simulated scene must never be presented as
+  // measured geometry: the badge over the canvas, the canvas's accessible name
+  // and the provenance line under the object list all read this one flag.
+  const simulatedScene = /simulated/i.test(metrics?.groundingSource ?? '')
 
   const sceneModel = useMemo(
     () => buildSceneModel({ pointCloud, trajectory, trackedObjects, metadata }),
@@ -407,7 +400,7 @@ export default function ViewerPage() {
           onKeyDown={handleKeyDown}
           tabIndex={0}
           role="img"
-          aria-label={`3D point cloud with ${sceneModel.points.length.toLocaleString()} points and ${sceneModel.objects.length} grounded objects, drawn in an East-North-Up frame. Drag to orbit, scroll to zoom, arrow keys rotate, plus and minus zoom, Escape clears the selection. Select an object from the list below for its supporting observations.`}
+          aria-label={`${simulatedScene ? 'Illustrative simulated scene, not measured geometry. ' : ''}3D point cloud with ${sceneModel.points.length.toLocaleString()} points and ${sceneModel.objects.length} grounded objects, drawn in an East-North-Up frame. Drag to orbit, scroll to zoom, arrow keys rotate, plus and minus zoom, Escape clears the selection. Select an object from the list below for its supporting observations.`}
         >
           <canvas ref={canvasRef} className="block" aria-hidden="true" />
 
@@ -427,6 +420,23 @@ export default function ViewerPage() {
               <path d="M8 100 H0 V92" />
             </g>
           </svg>
+
+          {/* A simulated run is labelled on the model itself, not only on the
+              results page: someone who opens the viewer directly must not have to
+              infer from the numbers that the geometry is illustrative. The badge
+              sits top-left, where the eye lands first; the flight-path note moved
+              to the bottom-right so the two can never overlap. */}
+          {simulatedScene && (
+            <div className="pointer-events-none absolute top-4 left-4 max-w-[19rem] px-3 py-2 rounded-lg bg-black/85 backdrop-blur-sm border border-[#d4a053]/45">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#d4a053]">
+                Illustrative scene — simulated
+              </p>
+              <p className="text-[11px] text-[#e7e5e4] leading-snug mt-0.5">
+                The built-in simulator produced these detections; object heights and the surfaces between them are
+                synthesized estimates, not measurements.
+              </p>
+            </div>
+          )}
 
           <div className="absolute bottom-4 left-4 flex flex-wrap items-center gap-2 pointer-events-none">
             <div className="px-3 py-1.5 rounded-lg bg-black/70 backdrop-blur-sm text-[11px] text-[#e7e5e4] font-mono">
@@ -460,7 +470,7 @@ export default function ViewerPage() {
           )}
 
           {showTrajectory && sceneModel.trajectoryPath.length > 0 && !pathVisible && (
-            <div className="absolute top-4 left-44 max-w-[16rem] px-3 py-2 rounded-lg bg-black/80 backdrop-blur-sm text-[11px] text-[#e7e5e4]">
+            <div className="absolute bottom-4 right-4 max-w-[16rem] px-3 py-2 rounded-lg bg-black/80 backdrop-blur-sm text-[11px] text-[#e7e5e4]">
               The flight path is outside this view — the drone cruises above the reconstructed ground.{' '}
               <button
                 type="button"
@@ -480,7 +490,9 @@ export default function ViewerPage() {
               Grounded objects — {sceneModel.objects.length}
             </h2>
             <p className="text-[11px] text-[#a8a29e] mb-3">
-              Detected by LocateAnything-3B and fused across keyframes. Select one to focus the camera and see its evidence.
+              {simulatedScene
+                ? 'Simulated detections from the built-in demo adapter, fused across keyframes — LocateAnything-3B was not run for this result. Select one to focus the camera and see its evidence.'
+                : 'Detected by LocateAnything-3B and fused across keyframes. Select one to focus the camera and see its evidence.'}
             </p>
             {sceneModel.objects.length === 0 ? (
               <p className="text-[11px] text-[#a8a29e]">

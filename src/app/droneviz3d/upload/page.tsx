@@ -3,10 +3,9 @@
 import { useCallback, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useDroneVizStore, PERSIST_KEY } from '../store'
+import { useDroneVizStore } from '../store'
 import { deriveSessionStatus } from '../session-status'
 import { SessionStatusBar } from '../session-status-bar'
-import { persistedModelInfo, useTracePage } from '../trace'
 import { videoFileError } from '../video-file'
 import { GridPattern, PulsatingButton, ShineBorder } from '../ui'
 
@@ -17,7 +16,7 @@ export default function UploadPage() {
   const {
     videoFile, videoPreview, metadata, validationErrors, dataConsent,
     setVideoFile, setVideoDuration, setMetadata, setDataConsent, reset, validateAndStart,
-    steps, isProcessing, processingComplete, pipelineError, pointCloud, jobId,
+    steps, isProcessing, processingComplete, pipelineError, pointCloud,
   } = useDroneVizStore()
   const [dragOver, setDragOver] = useState(false)
   const [dropError, setDropError] = useState<string | null>(null)
@@ -37,14 +36,6 @@ export default function UploadPage() {
     pipelineError,
     steps,
     pointCount: pointCloud.length,
-  })
-
-  useTracePage('upload', {
-    jobId,
-    state: status.id,
-    readsFromStore: ['videoFile', 'metadata', 'validationErrors', 'dataConsent', 'steps', 'pointCloud', 'jobId'],
-    readKeys: [PERSIST_KEY],
-    stored: persistedModelInfo(PERSIST_KEY),
   })
 
   const acceptFile = useCallback((file: File | undefined) => {

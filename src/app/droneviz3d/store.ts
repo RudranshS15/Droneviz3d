@@ -17,7 +17,6 @@ import {
   RawFlightData, validateFlightData, ValidationResult,
 } from './validator'
 import { FlightParams } from './geometry'
-import { trace } from './trace'
 
 export type { PipelineStep, StepId, StepUpdate } from './pipeline'
 export type { Point3D, ReconstructionPose, ConfidenceAnnotation, ReconstructionMetrics } from './reconstruct'
@@ -227,12 +226,6 @@ const browserStore: PersistStorage<DroneVizState> = {
       const parsed = JSON.parse(raw) as StorageValue<DroneVizState>
       const slice = parsed?.state as unknown as Partial<DroneVizState> | undefined
       if (slice) parsed.state = denormalizeState(slice as unknown as Record<string, unknown>) as unknown as DroneVizState
-      trace('storage', `read ${name}`, {
-        found: true,
-        complete: slice?.processingComplete === true,
-        videoName: slice?.videoName ?? null,
-        jobId: slice?.jobId ?? null,
-      })
       return parsed
     } catch {
       return null // corrupt entry — treat as absent
@@ -255,12 +248,6 @@ const browserStore: PersistStorage<DroneVizState> = {
         return
       }
       browserStorage.setItem(name, serialized)
-      trace('storage', `wrote ${name}`, {
-        bytes: serialized.length,
-        videoName: (state.videoName as string | null) ?? null,
-        jobId: (state.jobId as string | null) ?? null,
-        points: Array.isArray(points) ? points.length : 0,
-      })
     } catch {
       // Quota exceeded or storage disabled: the model simply won't persist.
       try { browserStorage.removeItem(name) } catch { /* ignore */ }
@@ -331,7 +318,6 @@ async function runPipeline(
     get().updateStep({ stepId: id, status: 'complete', duration: durationMs })
   }
   const failStep = (id: StepId, message: string) => {
-    trace('pipeline', `run failed at ${id}`, { jobId: get().jobId, message })
     get().updateStep({ stepId: id, status: 'error', errorMessage: message })
     // processingComplete stays false: nothing was produced. The results page reads
     // `pipelineError` to say so, rather than looking like a fresh visit.
@@ -478,15 +464,11 @@ export const useDroneVizStore = create<DroneVizState>()(
         // nothing persists without a finished model — but the key must not depend
         // on that rule continuing to hold.
         browserStore.removeItem(PERSIST_KEY)
-        trace('store', 'resetSession — previous model cleared', { removedKey: PERSIST_KEY })
       },
 
       runSimulatedDemo: () => {
         if (get().isProcessing) return
         set(freshRunState())
-        trace('pipeline', 'run started (simulated demo, user-requested)', {
-          jobId: get().jobId, videoName: get().videoName,
-        })
         void runPipeline(set, get, { allowWorker: false })
       },
 
@@ -498,7 +480,6 @@ export const useDroneVizStore = create<DroneVizState>()(
         get().resetSession()
         const preview = URL.createObjectURL(file)
         set({ videoFile: file, videoPreview: preview, videoName: file.name, validationErrors: [] })
-        trace('store', 'setVideoFile', { name: file.name, type: file.type, bytes: file.size })
       },
       // Some video files (e.g. MediaRecorder webm) report duration = Infinity until
       // decoded; clamp so it can never poison downstream math.
@@ -528,9 +509,6 @@ export const useDroneVizStore = create<DroneVizState>()(
         // A new run is by definition fresh, even if the previous model came back
         // from this browser's storage.
         set(freshRunState())
-        trace('pipeline', 'run started', {
-          jobId: get().jobId, workerMode: WORKER_MODE, videoName: get().videoName,
-        })
 
         // Real execution: every step is advanced by the operation it names. A
         // worker failure stops the run and is reported — it is never quietly
@@ -540,11 +518,6 @@ export const useDroneVizStore = create<DroneVizState>()(
       },
 
       updateStep: (update) => {
-        trace('pipeline', `${update.stepId} → ${update.status}`, {
-          jobId: get().jobId,
-          ...('progress' in update ? { progress: update.progress } : {}),
-          ...('errorMessage' in update ? { errorMessage: update.errorMessage } : {}),
-        })
         set((s) => ({
           steps: s.steps.map((step) => {
             if (step.id !== update.stepId) return step
