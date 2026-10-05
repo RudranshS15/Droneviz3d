@@ -8,9 +8,16 @@
  *
  * Why this exists rather than `mv`: the tree is ~20k files and a cross-volume
  * move outruns any single shell command, while an interrupted `mv` cannot
- * resume. Re-running is always safe: a destination file whose size matches its
- * source is skipped, nothing is ever removed from the source during phase 1,
- * and phase 2 refuses to touch anything until a verifying pass succeeds.
+ * resume. Re-running is always safe: a destination file whose size *and*
+ * modification time match its source is skipped, nothing is ever removed from
+ * the source during phase 1, and phase 2 refuses to touch anything until a
+ * verifying pass succeeds.
+ *
+ * Size alone is not enough, and this was learned the hard way: `.git/refs/heads/
+ * main` is 41 bytes in every revision, so a size-only skip left the destination
+ * repo pointing at an older commit while its new objects had been copied. The
+ * copy now carries source timestamps across and skips only on size + time, which
+ * makes the check exact for same-length edits too.
  *
  * Why the junction goes on the *project root*, not on node_modules or .next:
  * that was tried and rejected. Next rewrites paths it resolves through such a
@@ -73,11 +80,23 @@ let budgetExpired = false
 const outOfTime = () => Date.now() - startedAt > BUDGET_MS
 const atTopLevel = (dir) => dir === SRC
 
-function copyFile(src, dst) {
+/**
+ * Windows keeps timestamps to about a millisecond through copyFileSync +
+ * utimesSync; the tolerance exists only for filesystems with coarser mtime.
+ */
+function sameMtime(a, b) {
+  return Math.abs(a.mtimeMs - b.mtimeMs) < 2000
+}
+
+function copyFile(src, dst, stat) {
   fs.mkdirSync(path.dirname(dst), { recursive: true })
   for (let attempt = 1; ; attempt += 1) {
     try {
       fs.copyFileSync(src, dst)
+      // Carry the source timestamp over. "Skip when size and time match" only
+      // works if the copy preserves the time; otherwise every destination file
+      // looks newer and a same-size edit is never noticed.
+      fs.utimesSync(dst, stat.atime, stat.mtime)
       return true
     } catch (err) {
       // A watcher or indexer can hold a transient lock; a short retry usually wins.
@@ -132,14 +151,17 @@ function copyTree(srcDir, dstDir) {
     stats.files += 1
     stats.bytes += stat.size
     try {
-      if (fs.existsSync(dst) && fs.statSync(dst).size === stat.size) {
+      const existing = fs.existsSync(dst) ? fs.statSync(dst) : null
+      // Same size *and* same time: copies below preserve timestamps, so this is
+      // the exact test rather than a size guess that misses same-length edits.
+      if (existing && existing.size === stat.size && sameMtime(existing, stat)) {
         stats.skipped += 1
         continue
       }
     } catch {
       // fall through and (re)copy
     }
-    if (copyFile(src, dst)) stats.copied += 1
+    if (copyFile(src, dst, stat)) stats.copied += 1
   }
 }
 
@@ -169,7 +191,10 @@ function verifyTree(srcDir, dstDir) {
         if (stat.isSymbolicLink()) {
           fs.lstatSync(dstPath)
         } else if (stat.isFile()) {
-          if (fs.statSync(dstPath).size !== stat.size) throw new Error('size mismatch')
+          const copied = fs.statSync(dstPath)
+          if (copied.size !== stat.size || !sameMtime(copied, stat)) {
+            throw new Error('size or timestamp mismatch')
+          }
         }
       } catch {
         bad += 1
