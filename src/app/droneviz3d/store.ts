@@ -14,6 +14,9 @@ import {
 } from './grounding'
 import { fingerprintVideoFile } from './video-fingerprint'
 import {
+  DEFAULT_LABEL_VOCABULARY, defaultVocabularyInput, parseLabelVocabulary,
+} from './label-vocabulary'
+import {
   RawFlightData, validateFlightData, ValidationResult,
 } from './validator'
 import { FlightParams } from './geometry'
@@ -71,8 +74,7 @@ export interface DroneVizState {
   /**
    * Identity of the current run, minted when a run starts and cleared when a new
    * session begins. Persisted with the model so a restored entry can be told
-   * apart from the run the draft in front of you would produce — and so the trace
-   * lines can name which run a number belongs to.
+   * apart from the run the draft in front of you would produce.
    */
   jobId: string | null
   /**
@@ -86,6 +88,14 @@ export interface DroneVizState {
   setVideoDuration: (sec: number) => void
   setMetadata: (meta: Partial<FlightMetadata>) => void
   setDataConsent: (consent: boolean) => void
+  /**
+   * Object classes the grounding step is asked for, as typed on the upload form
+   * ("building, vehicle, tree"). Validated at run start by parseLabelVocabulary;
+   * a simulated run ignores it entirely because the adapter generates its own
+   * illustrative scene — the upload form says so where this is edited.
+   */
+  labelVocabularyInput: string
+  setLabelVocabularyInput: (value: string) => void
   validateAndStart: () => boolean
   /**
    * Re-run from the grounding stage with the simulated adapter. Offered
@@ -131,7 +141,7 @@ type PersistedSlice = Pick<
   DroneVizState,
   | 'processingComplete' | 'pointCloud' | 'trajectory' | 'annotations'
   | 'metrics' | 'trackedObjects' | 'bounds' | 'videoName'
-  | 'videoDurationSec' | 'metadata' | 'jobId'
+  | 'videoDurationSec' | 'metadata' | 'labelVocabularyInput' | 'jobId'
 >
 
 /** One run's identity: time-ordered, short, and unique enough for a browser log. */
@@ -217,6 +227,19 @@ function denormalizeState(state: Record<string, unknown>): Record<string, unknow
  */
 const browserStorage = typeof window !== 'undefined' ? window.localStorage : null
 
+/**
+ * Repair the class-list field on the way out of storage. The stored entry is
+ * untrusted input: an entry written before the field existed has none, and a
+ * hand-edited or corrupted one can hold anything. The parser and the text field
+ * both need a string, so the boundary is where the type is made true — for every
+ * read, not only the version-mismatch path `sanitizePersisted` covers.
+ */
+function repairLabelVocabulary(state: Record<string, unknown>): void {
+  if (typeof state.labelVocabularyInput !== 'string') {
+    state.labelVocabularyInput = defaultVocabularyInput()
+  }
+}
+
 const browserStore: PersistStorage<DroneVizState> = {
   getItem: (name) => {
     if (!browserStorage) return null
@@ -225,7 +248,10 @@ const browserStore: PersistStorage<DroneVizState> = {
     try {
       const parsed = JSON.parse(raw) as StorageValue<DroneVizState>
       const slice = parsed?.state as unknown as Partial<DroneVizState> | undefined
-      if (slice) parsed.state = denormalizeState(slice as unknown as Record<string, unknown>) as unknown as DroneVizState
+      if (slice) {
+        parsed.state = denormalizeState(slice as unknown as Record<string, unknown>) as unknown as DroneVizState
+        repairLabelVocabulary(parsed.state as unknown as Record<string, unknown>)
+      }
       return parsed
     } catch {
       return null // corrupt entry — treat as absent
@@ -277,6 +303,7 @@ function sanitizePersisted(persisted: unknown): Partial<PersistedSlice> {
   if (typeof s.jobId === 'string') out.jobId = s.jobId
   if (typeof s.videoDurationSec === 'number' && Number.isFinite(s.videoDurationSec)) out.videoDurationSec = s.videoDurationSec
   if (s.metadata && typeof s.metadata === 'object') out.metadata = s.metadata
+  if (typeof s.labelVocabularyInput === 'string') out.labelVocabularyInput = s.labelVocabularyInput
   return out
 }
 
@@ -339,7 +366,12 @@ async function runPipeline(
     heading: validated.data.heading, durationSec,
     rtkCorrections: validated.data.rtkCorrections,
   }
-  const labels = ['building', 'vehicle', 'tree'] as const
+  // The classes the grounding step is prompted for. Parsed here rather than
+  // trusted, because runSimulatedDemo reaches this function without going
+  // through validateAndStart; an unparsable list falls back to the defaults
+  // instead of sending an empty prompt to a worker.
+  const parsedVocabulary = parseLabelVocabulary(state.labelVocabularyInput)
+  const labels: string[] = parsedVocabulary.ok ? parsedVocabulary.labels : [...DEFAULT_LABEL_VOCABULARY]
   const useWorker = allowWorker && WORKER_MODE
   // Read from the upload when there is one. The seed used to be the flight
   // metadata alone, so two clips flown over the same way produced identical
@@ -440,6 +472,7 @@ export const useDroneVizStore = create<DroneVizState>()(
       pointCloud: [], trajectory: [], annotations: [], metrics: null,
       trackedObjects: [], bounds: null,
       dataConsent: false,
+      labelVocabularyInput: defaultVocabularyInput(),
       restoredFromStorage: false,
       hydrated: false,
 
@@ -484,6 +517,9 @@ export const useDroneVizStore = create<DroneVizState>()(
       // Some video files (e.g. MediaRecorder webm) report duration = Infinity until
       // decoded; clamp so it can never poison downstream math.
       setVideoDuration: (sec) => set({ videoDurationSec: Number.isFinite(sec) ? Math.max(0, sec) : 0 }),
+      // Same idiom as setMetadata: typing in the form clears the previous
+      // attempt's errors, which are recomputed on the next start attempt.
+      setLabelVocabularyInput: (value) => set({ labelVocabularyInput: value, validationErrors: [] }),
       setMetadata: (meta) => set((s) => ({ metadata: { ...s.metadata, ...meta }, validationErrors: [] })),
       setDataConsent: (consent) =>
         set((s) => ({
@@ -505,6 +541,11 @@ export const useDroneVizStore = create<DroneVizState>()(
         }
         const result: ValidationResult = validateFlightData(metadata as RawFlightData)
         if (!result.ok) { set({ validationErrors: result.errors.map((e) => e.message) }); return false }
+        const vocabulary = parseLabelVocabulary(get().labelVocabularyInput)
+        if (!vocabulary.ok) {
+          set({ validationErrors: [vocabulary.error ?? 'The object-class list is not usable.'] })
+          return false
+        }
 
         // A new run is by definition fresh, even if the previous model came back
         // from this browser's storage.
@@ -573,6 +614,7 @@ export const useDroneVizStore = create<DroneVizState>()(
         videoName: s.videoName,
         videoDurationSec: s.videoDurationSec,
         metadata: s.metadata,
+        labelVocabularyInput: s.labelVocabularyInput,
         jobId: s.jobId,
       }) as unknown as DroneVizState,
       migrate: (persisted) => sanitizePersisted(persisted) as unknown as DroneVizState,

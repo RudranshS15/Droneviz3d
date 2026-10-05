@@ -16,7 +16,7 @@
 // describing artifacts that were never generated.
 export const STEP_DEFINITIONS = [
   { id: 'extract', name: 'Frame Extraction', detail: 'Sampling keyframes along the single flight pass', tool: 'Keyframe planner' },
-  { id: 'grounding', name: 'Semantic Grounding', detail: 'LocateAnything-3B grounding of buildings, vehicles, trees per keyframe', tool: 'LocateAnything-3B (PBD)' },
+  { id: 'grounding', name: 'Semantic Grounding', detail: 'LocateAnything-3B grounding of the object classes you list, per keyframe', tool: 'LocateAnything-3B (PBD)' },
   { id: 'projection', name: 'Ground Projection', detail: 'Projecting detected boxes to world coordinates via camera model', tool: 'Pinhole + ENU' },
   { id: 'tracking', name: 'Multi-view Tracking', detail: 'Deduplicating detections across keyframes with score fusion', tool: 'Corroboration fusion' },
   { id: 'heightfield', name: 'Height Field', detail: 'Rasterizing grounded objects into an illustrative height field', tool: '1.5 m grid' },

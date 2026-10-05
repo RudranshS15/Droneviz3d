@@ -7,6 +7,8 @@ import { useDroneVizStore } from '../store'
 import { deriveSessionStatus } from '../session-status'
 import { SessionStatusBar } from '../session-status-bar'
 import { videoFileError } from '../video-file'
+import { MAX_VOCABULARY_LABELS, defaultVocabularyInput, parseLabelVocabulary } from '../label-vocabulary'
+import { footageAdvisories } from '../footage-advisory'
 import { GridPattern, PulsatingButton, ShineBorder } from '../ui'
 
 export default function UploadPage() {
@@ -16,11 +18,16 @@ export default function UploadPage() {
   const {
     videoFile, videoPreview, metadata, validationErrors, dataConsent,
     setVideoFile, setVideoDuration, setMetadata, setDataConsent, reset, validateAndStart,
+    labelVocabularyInput, setLabelVocabularyInput,
     steps, isProcessing, processingComplete, pipelineError, pointCloud,
   } = useDroneVizStore()
   const [dragOver, setDragOver] = useState(false)
   const [dropError, setDropError] = useState<string | null>(null)
   const [fileName, setFileName] = useState(videoFile?.name || '')
+  // What the browser reports about the chosen clip once its metadata loads.
+  // Kept apart from the store's videoDurationSec (which persists across visits
+  // and belongs to the run) so an advisory never describes the previous file.
+  const [videoMeta, setVideoMeta] = useState<{ durationSec: number; width: number; height: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   // dragenter/dragleave bubble from every child, so count them instead of
   // toggling a flag — a plain flag flickers as the pointer crosses the icon.
@@ -46,6 +53,7 @@ export default function UploadPage() {
       return
     }
     setDropError(null)
+    setVideoMeta(null)
     setVideoFile(file)
     setFileName(file.name)
   }, [setVideoFile])
@@ -98,8 +106,28 @@ export default function UploadPage() {
   ]
 
   const onVideoLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    setVideoDuration(e.currentTarget.duration || 0)
+    const el = e.currentTarget
+    setVideoDuration(el.duration || 0)
+    setVideoMeta({
+      durationSec: Number.isFinite(el.duration) ? el.duration : 0,
+      width: el.videoWidth,
+      height: el.videoHeight,
+    })
   }
+
+  // The class list is validated live so the field can say what is wrong, and
+  // again at run start in the store — the two must agree, so both call the same
+  // parser rather than re-implementing its rules.
+  const vocabulary = parseLabelVocabulary(labelVocabularyInput)
+
+  // Advisories are drawn only from what the browser measured for *this* clip.
+  const advisories = videoFile
+    ? footageAdvisories({
+        durationSec: videoMeta?.durationSec ?? null,
+        width: videoMeta?.width ?? null,
+        height: videoMeta?.height ?? null,
+      })
+    : []
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] flex flex-col">
@@ -247,6 +275,25 @@ export default function UploadPage() {
                 ))}
               </div>
             )}
+
+            {/* Clip advisories: the pipeline assumes a single downward flight
+                pass, and a phone clip breaks that. Saying so here is cheaper than
+                letting the run finish and presenting the result as a survey. */}
+            {advisories.length > 0 && (
+              <div role="note" className="p-4 rounded-xl border border-[#c27a3a]/40 bg-[#c27a3a]/[0.08] space-y-1.5">
+                <p className="text-[12px] font-semibold text-[#d4a053]">This may not be drone survey footage</p>
+                {advisories.map((advisory) => (
+                  <p key={advisory.id} className="text-[12px] text-[#e7e5e4]/90 leading-relaxed">
+                    {advisory.message}
+                  </p>
+                ))}
+                <p className="text-[11px] text-[#a8a29e]">
+                  {workerMode
+                    ? 'You can still run it — the result states which model produced the detections.'
+                    : 'You can still run it — a simulated result is labelled as illustrative on every page.'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Right: Metadata Form */}
@@ -277,6 +324,36 @@ export default function UploadPage() {
                     )
                   })}
                 </div>
+              </div>
+
+              {/* Grounding classes. One list, used as the grounding prompt; the
+                  note underneath says plainly that the simulator ignores it. */}
+              <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/[0.08]">
+                <h2 className="text-[13px] font-semibold text-[#e7e5e4] mb-1">Objects to look for</h2>
+                <p className="text-[11px] text-[#a8a29e] mb-3">
+                  Comma-separated object classes sent to the grounding model as its label set, up to{' '}
+                  {MAX_VOCABULARY_LABELS} classes. Nothing guarantees a class will be found — these are the
+                  classes the model is asked about.
+                </p>
+                <input
+                  id="field-label-vocabulary"
+                  value={labelVocabularyInput}
+                  onChange={(e) => setLabelVocabularyInput(e.target.value)}
+                  aria-invalid={vocabulary.ok ? undefined : true}
+                  placeholder={defaultVocabularyInput()}
+                  className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-[#e7e5e4] text-[13px] font-mono placeholder:text-white/25 focus:outline-none focus:border-[#d4a053] focus:bg-white/[0.07] transition-all"
+                />
+                {!vocabulary.ok && (
+                  <p role="alert" className="text-[11px] text-red-200 mt-2">
+                    {vocabulary.error}
+                  </p>
+                )}
+                {/* Deliberately not conditioned on `vocabulary.ok`: an empty
+                    list must still be told the simulator ignores it. */}
+                <p className="text-[11px] text-[#a8a29e]/80 mt-2 leading-relaxed">
+                  A custom list only changes a real worker run. The built-in simulator ignores these classes and
+                  always draws its own illustrative scene from the clip and the flight metadata.
+                </p>
               </div>
 
               {/* Optional Sensors */}
