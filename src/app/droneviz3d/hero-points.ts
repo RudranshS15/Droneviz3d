@@ -8,7 +8,7 @@
  * That is not hypothetical: the before/after illustration on the same page did
  * exactly that, so every load logged a hydration mismatch.
  *
- * Colours come from `tokens.ts`, the palette `viewer-render.ts` matches, so the
+ * Colours come from `tokens.ts`, the palette `viewer-frame.ts` matches, so the
  * hero and the viewer cannot drift apart. The maths lives here, separate from the
  * canvas, so it can be tested without a DOM.
  */

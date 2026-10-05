@@ -4,12 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useDroneVizStore } from '../store'
 import { buildSceneModel } from '../scene'
-import { ColorMode, VIEWER_PALETTE, renderScene } from '../viewer-render'
+import { Canvas } from '@react-three/fiber'
+import { ColorMode, frameScene } from '../viewer-frame'
+import { ViewerScene } from '../viewer-scene'
+import { SceneAnnotations } from '../viewer-annotations'
 import { CONFIDENCE_BANDS, bandFor } from '../confidence'
 import { objectObservations } from '../results-view'
 import { localToLngLat } from '../geometry'
 import {
-  DEFAULT_FOV_Y, OrbitCamera, ViewPreset, VIEW_PRESETS, Viewport, clampDistance,
+  DEFAULT_FOV_Y, NEAR_PLANE, OrbitCamera, ViewPreset, VIEW_PRESETS, Viewport, clampDistance,
   clampElevation, degToRad, focusCamera, frameCamera, pickNearestObject, radToDeg,
 } from '../viewer-camera'
 
@@ -32,9 +35,7 @@ export default function ViewerPage() {
     [pointCloud, trajectory, trackedObjects, metadata]
   )
 
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const markersRef = useRef<{ index: number; x: number; y: number }[]>([])
   const dragRef = useRef({ active: false, x: 0, y: 0, moved: 0 })
 
   const [viewport, setViewport] = useState<Viewport>({ width: 960, height: 600 })
@@ -45,8 +46,11 @@ export default function ViewerPage() {
   const [pointSize, setPointSize] = useState(3)
   const [selected, setSelected] = useState<number | null>(null)
   const [autoRotate, setAutoRotate] = useState(false)
-  const [pathVisible, setPathVisible] = useState(false)
-  const [labelsDrawn, setLabelsDrawn] = useState<number | null>(null)
+  // three.js has no server renderer and this page is prerendered at build time,
+  // so the canvas is mounted once hydration is done. Until then the panel shows
+  // its background, exactly like an empty scene would.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   // Frame the model once it (or the viewport) changes. The camera keeps the
   // user's viewing angles — only the distance is recomputed to fit.
@@ -111,40 +115,28 @@ export default function ViewerPage() {
     return () => cancelAnimationFrame(frame)
   }, [autoRotate])
 
-  // Draw. Everything the canvas shows comes from the camera basis, so the
-  // orientation gizmo can never disagree with the model.
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas || !camera || sceneModel.empty) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = Math.max(1, Math.round(viewport.width * dpr))
-    canvas.height = Math.max(1, Math.round(viewport.height * dpr))
-    canvas.style.width = `${viewport.width}px`
-    canvas.style.height = `${viewport.height}px`
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
-    const stats = renderScene(ctx, {
-      camera,
-      viewport,
-      bounds: sceneModel.bounds,
-      points: sceneModel.points,
-      trajectoryPath: sceneModel.trajectoryPath,
-      objects: sceneModel.objects,
-      pointSize,
-      colorMode,
-      showDetections,
-      showTrajectory,
-      selectedIndex: selected,
-      palette: VIEWER_PALETTE,
-    })
-    markersRef.current = stats.markers
-    // Only re-render when these actually change, so auto-rotate stays cheap.
-    setPathVisible((previous) => (previous === stats.trajectoryVisible ? previous : stats.trajectoryVisible))
-    setLabelsDrawn((previous) => (previous === stats.labelsDrawn ? previous : stats.labelsDrawn))
-  }, [sceneModel, camera, viewport, colorMode, showDetections, showTrajectory, pointSize, selected])
+  // The annotation frame: projected markers, which labels are legible, whether
+  // the flight path is on screen, and the gizmo axes. Pure (viewer-frame.ts) and
+  // derived from the same camera the three.js scene is driven by, so the overlay
+  // and the model can never disagree — and the same objects a click can select.
+  const frame = useMemo(
+    () =>
+      camera && !sceneModel.empty
+        ? frameScene({
+            camera,
+            viewport,
+            bounds: sceneModel.bounds,
+            trajectoryPath: sceneModel.trajectoryPath,
+            objects: sceneModel.objects,
+            showDetections,
+            showTrajectory,
+            selectedIndex: selected,
+          })
+        : null,
+    [camera, sceneModel, viewport, showDetections, showTrajectory, selected]
+  )
+  const pathVisible = frame?.trajectory.visible ?? false
+  const labelsDrawn = frame?.labelsDrawn ?? null
 
   const selectObject = useCallback(
     (index: number) => {
@@ -211,10 +203,11 @@ export default function ViewerPage() {
     e.currentTarget.releasePointerCapture?.(e.pointerId)
     if (wasDrag) return
 
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    const hit = pickNearestObject(markersRef.current, e.clientX - rect.left, e.clientY - rect.top)
+    // The canvas fills the container, so container coordinates and projected
+    // marker coordinates are the same pixels.
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const hit = pickNearestObject(frame?.markers ?? [], e.clientX - rect.left, e.clientY - rect.top)
     if (hit === null) setSelected(null)
     else selectObject(hit)
   }
@@ -402,7 +395,43 @@ export default function ViewerPage() {
           role="img"
           aria-label={`${simulatedScene ? 'Illustrative simulated scene, not measured geometry. ' : ''}3D point cloud with ${sceneModel.points.length.toLocaleString()} points and ${sceneModel.objects.length} grounded objects, drawn in an East-North-Up frame. Drag to orbit, scroll to zoom, arrow keys rotate, plus and minus zoom, Escape clears the selection. Select an object from the list below for its supporting observations.`}
         >
-          <canvas ref={canvasRef} className="block" aria-hidden="true" />
+          {/* The scene. three.js draws the cloud, the ground grid, the flight
+              path and the detection footprints; the labels, marker rings and
+              gizmo over them are DOM, so they keep exact pixel sizes and stay
+              inspectable without a GPU. */}
+          <div className="absolute inset-0" aria-hidden="true">
+            {mounted && camera && !sceneModel.empty && (
+              <Canvas
+                frameloop="demand"
+                dpr={[1, 2]}
+                camera={{
+                  fov: (DEFAULT_FOV_Y * 180) / Math.PI,
+                  near: NEAR_PLANE,
+                  far: 100000,
+                  position: [0, 0, 100],
+                }}
+              >
+                <ViewerScene
+                  camera={camera}
+                  bounds={sceneModel.bounds}
+                  points={sceneModel.points}
+                  trajectoryPath={sceneModel.trajectoryPath}
+                  objects={sceneModel.objects}
+                  colorMode={colorMode}
+                  pointSize={pointSize}
+                  showDetections={showDetections}
+                  showTrajectory={showTrajectory}
+                  selectedIndex={selected}
+                />
+              </Canvas>
+            )}
+          </div>
+
+          {/* Marker rings, labels and the gizmo — from the same frame the
+              picking path uses, so what you can click is what you can see. The
+              results preview renders the same component, which is how it keeps
+              the annotations the old shared renderer gave it. */}
+          <SceneAnnotations frame={frame} />
 
           {/* Corner brackets — a survey-viewfinder frame around the model. Four
               inert L-shapes, drawn in SVG so they scale with the panel without
@@ -445,7 +474,7 @@ export default function ViewerPage() {
           </div>
 
           {colorMode === 'confidence' && (
-            <div className="absolute top-4 right-4 p-3 rounded-lg bg-black/70 backdrop-blur-sm space-y-1 pointer-events-none">
+            <div className="absolute top-24 right-4 p-3 rounded-lg bg-black/70 backdrop-blur-sm space-y-1 pointer-events-none">
               {CONFIDENCE_BANDS.map((band) => (
                 <div key={band.id} className="flex items-center gap-2 text-[11px]">
                   <span className={`w-2.5 h-2.5 rounded ${band.barClass}`} aria-hidden="true" />

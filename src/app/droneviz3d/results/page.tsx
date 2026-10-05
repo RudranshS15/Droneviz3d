@@ -6,8 +6,11 @@ import Link from 'next/link'
 import { useDroneVizStore, type ConfidenceAnnotation } from '../store'
 import { EXPORT_FORMATS, exportAs, type ExportFormatId, ExportPayload } from '../exporter'
 import { buildSceneModel } from '../scene'
-import { VIEWER_PALETTE, renderScene } from '../viewer-render'
-import { frameCamera } from '../viewer-camera'
+import { Canvas } from '@react-three/fiber'
+import { ViewerScene } from '../viewer-scene'
+import { SceneAnnotations } from '../viewer-annotations'
+import { frameScene } from '../viewer-frame'
+import { DEFAULT_FOV_Y, NEAR_PLANE, frameCamera } from '../viewer-camera'
 import { countByBand } from '../confidence'
 import { buildMetricGroups, deriveReconstructionStatus, type MetricEntry, type StatusTone } from '../results-view'
 import { WORKER_MODE } from '../store'
@@ -180,37 +183,51 @@ export default function ResultsPage() {
 
   const groups = buildMetricGroups({ metrics, trackedObjects })
   const [exportError, setExportError] = useState<string | null>(null)
-  const previewRef = useRef<HTMLCanvasElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
+  // three.js has no server renderer and this page is prerendered at build time.
+  const [previewMounted, setPreviewMounted] = useState(false)
+  const [previewWidth, setPreviewWidth] = useState(480)
+  useEffect(() => setPreviewMounted(true), [])
 
-  // The preview is the same renderer the viewer uses, framed on the same bounds,
-  // so what you see here is what the viewer shows.
+  // The preview is the same scene the viewer renders, framed on the same bounds,
+  // so what you see here is what the viewer shows. Its framing needs the panel's
+  // real width, so the aspect it fits is the aspect it is drawn at.
   useEffect(() => {
-    const canvas = previewRef.current
-    if (!canvas || sceneModel.empty) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const dpr = window.devicePixelRatio || 1
-    const width = Math.max(240, Math.round(canvas.clientWidth || 480))
-    const height = 220
-    canvas.width = Math.round(width * dpr)
-    canvas.height = Math.round(height * dpr)
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const viewport = { width, height }
-    renderScene(ctx, {
-      camera: frameCamera(sceneModel.bounds, viewport),
-      viewport,
+    const el = previewRef.current
+    if (!el) return
+    const measure = () => {
+      const width = Math.max(240, Math.round(el.getBoundingClientRect().width || 480))
+      setPreviewWidth((previous) => (previous === width ? previous : width))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [previewMounted])
+
+  const previewCamera = useMemo(
+    () => frameCamera(sceneModel.bounds, { width: previewWidth, height: 220 }),
+    [sceneModel, previewWidth]
+  )
+
+  // The preview carried object labels, the take-off marker and the orientation
+  // gizmo before the scene moved to three.js; the frame plus the shared overlay
+  // is what keeps them. Nothing on the preview is selectable, so it never passes
+  // a selected index.
+  const previewFrame = useMemo(
+    () => frameScene({
+      camera: previewCamera,
+      viewport: { width: previewWidth, height: 220 },
       bounds: sceneModel.bounds,
-      points: sceneModel.points,
       trajectoryPath: sceneModel.trajectoryPath,
       objects: sceneModel.objects,
-      pointSize: 2,
-      colorMode: 'rgb',
       showDetections: true,
       showTrajectory: true,
       selectedIndex: null,
-      palette: VIEWER_PALETTE,
-    })
-  }, [sceneModel])
+    }),
+    [previewCamera, previewWidth, sceneModel]
+  )
 
   const exportPayload: ExportPayload = {
     points: pointCloud, trajectory, metrics, bounds,
@@ -283,9 +300,40 @@ export default function ResultsPage() {
           </div>
           <div className="rounded-xl overflow-hidden border border-[#292524] bg-[#09090b]">
             {status.canExport ? (
-              <canvas ref={previewRef} className="block w-full" style={{ height: 220 }} role="img"
+              <div
+                ref={previewRef}
+                className="relative"
+                style={{ height: 220 }}
+                role="img"
                 aria-label={`Preview of the reconstructed model with ${pointCloud.length.toLocaleString()} points and ${trackedObjects.length} grounded objects.`}
-              />
+              >
+                {previewMounted && (
+                  <Canvas
+                    frameloop="demand"
+                    dpr={[1, 2]}
+                    camera={{
+                      fov: (DEFAULT_FOV_Y * 180) / Math.PI,
+                      near: NEAR_PLANE,
+                      far: 100000,
+                      position: [0, 0, 100],
+                    }}
+                  >
+                    <ViewerScene
+                      camera={previewCamera}
+                      bounds={sceneModel.bounds}
+                      points={sceneModel.points}
+                      trajectoryPath={sceneModel.trajectoryPath}
+                      objects={sceneModel.objects}
+                      colorMode="rgb"
+                      pointSize={2}
+                      showDetections
+                      showTrajectory
+                      selectedIndex={null}
+                    />
+                  </Canvas>
+                )}
+                <SceneAnnotations frame={previewFrame} gizmoClassName="top-2 left-2" />
+              </div>
             ) : (
               <div className="h-[220px] flex items-center justify-center text-[12px] text-[#a8a29e] px-6 text-center">
                 {status.id === 'empty'
